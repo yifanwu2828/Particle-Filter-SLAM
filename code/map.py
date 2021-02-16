@@ -6,6 +6,19 @@ import matplotlib.pyplot as plt
 import pr2_utils as utils
 
 
+def split2two(input_data: np.ndarray):
+    """
+    split data into timestamp, data
+    """
+    return input_data[:, 0], input_data[:, 1:]
+
+
+def show_image():
+    vehicle_img = plt.imread("data/vehicle_cofig.png")
+    plt.imshow(vehicle_img)
+    plt.show()
+
+
 def show_lidar(angles, ranges):
     """
     Show lidar in polar coordinates
@@ -197,13 +210,6 @@ def get_FOG_param() -> dict:
     return FOG_param
 
 
-def split2two(input_data: np.ndarray):
-    """
-    split data into timestamp, data
-    """
-    return input_data[:, 0], input_data[:, 1:]
-
-
 def get_R(x: float, y: float, z: float) -> np.ndarray:
     """
     Calculate 3x3 rotation matrix in Euler Angle Parametrization.
@@ -296,14 +302,13 @@ def transform(s_L, b_R_l, pos)-> np.ndarray:
     return s_V
 
 
-
-
 def main():
     pass
 
 
 if __name__ == '__main__':
     np.seterr(all='raise')
+    show_image()
 
     start_load = utils.tic()
     timestamp, lidar_data = utils.read_data_from_csv('data/sensor_data/lidar.csv')
@@ -350,7 +355,9 @@ if __name__ == '__main__':
     print(f"s_W[0] without z-axis: {s_W0.shape}")
     utils.toc(start_trans, "Transform from laser to body s_L -> s_B -> s_W at t = 0")
     ######################################################################################
+
     # At t=0 assume robots locate at (0,0)
+    # TODO: explore the max and min range in encoder
     # TODO: step3: convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
     # Assign each point to a specific cell in the map and then do bresenham2D
     # convert nx(x,y) to row and columns
