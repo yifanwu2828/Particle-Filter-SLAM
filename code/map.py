@@ -8,7 +8,7 @@ import pr2_utils as utils
 
 def show_lidar(angles, ranges):
     """
-    Show lidar
+    Show lidar in polar coordinates
     """
     plt.figure()
     ax = plt.subplot(111, projection='polar')
@@ -18,6 +18,20 @@ def show_lidar(angles, ranges):
     ax.set_rlabel_position(-22.5)  # get radial labels away from plotted line
     ax.grid(True)
     ax.set_title("Lidar scan data", va='bottom')
+    plt.show()
+
+
+def show_laserXY(xs, ys):
+    """
+    plot lidar points in cartesian coordinate
+    """
+    fig1 = plt.figure()
+    plt.plot(xs, ys, '.k')
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.title("Laser reading")
+    plt.axis('equal')
+    plt.grid(True)
     plt.show()
 
 
@@ -47,15 +61,14 @@ def polar2cartesian(r, theta):
     """
     a = r * np.exp(1j * theta)
     return a.real, a.imag
-    # x = r * np.cos(theta)
-    # y = r * np.sin(theta)
-    # return x, y
 
 
 def polar2xyz(lidar_data, lidar_param, index=0, verbose=False) -> np.ndarray:
     """
     Convert from polar coordinates to cartesian coordinate with z axis fill with zeros
-    Remove scan points that are too close or too far, keep data between [min_range=2, max_range=80]
+    Remove scan points that are too close or too far,
+    Only consider points between [min_range=2, max_range=80]
+    * Measurements between 2m-75m are recommended to be included as valid data.
     :param: lidar_data
     :type:  numpy.array
     :param: index
@@ -151,7 +164,7 @@ def get_lidar_param(verbose=False):
     return lidar_param
 
 
-def split2two(input_data):
+def split2two(input_data: np.ndarray):
     """
     split data into timestamp, data
     """
@@ -314,6 +327,10 @@ if __name__ == '__main__':
 
     xs0 = s_W0[0, :]
     ys0 = s_W0[1, :]
+
+    show_laserXY(xs0, ys0)
+
+
     # convert from meters to cells
     xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
     yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
