@@ -107,7 +107,7 @@ def polar2xyz(lidar_data, lidar_param, index=0, verbose=False) -> np.ndarray:
     return np.vstack((x, y, z))
 
 
-def get_lidar_param(verbose=False):
+def get_lidar_param(verbose=False) -> dict:
     """
     FOV: 190 (degree), Start angle: -5 (degree), End angle: 185 (degree),
     Angular resolution: 0.666 (degree)
@@ -127,21 +127,21 @@ def get_lidar_param(verbose=False):
     RPY_deg = RPY(R_deg, P_deg, Y_deg)
     RPY_rad = np.deg2rad(RPY(R_deg, P_deg, Y_deg))
 
-    B_R_L = np.array([[0.00130201, 0.796097, 0.605167],
+    V_R_L = np.array([[0.00130201, 0.796097, 0.605167],
                       [0.999999, -0.000419027, -0.00160026],
                       [-0.00102038, 0.605169, -0.796097]
                       ],
                      dtype=np.float64)
-    # position [x,y,z].T denoted as B_p_L
-    B_p_L = np.array([0.8349, -0.0126869, 1.76416], dtype=np.float64)
+    # position [x,y,z].T denoted as V_p_L
+    V_p_L = np.array([0.8349, -0.0126869, 1.76416], dtype=np.float64)
 
     # verify R
     Rot = get_R(*RPY_rad)
     if verbose:
         print(f"R: {Rot}\nRot:{Rot}")
-        print(f"Diff(R-Rot):{np.subtract(B_R_L, Rot)}\n")
-        print(f"Translation p: {B_p_L}")
-    assert np.allclose(B_R_L, Rot)
+        print(f"Diff(R-Rot):{np.subtract(V_R_L, Rot)}\n")
+        print(f"Translation p: {V_p_L}")
+    assert np.allclose(V_R_L, Rot)
 
     lidar_param = dict()
     lidar_param["R_deg"] = R_deg
@@ -149,9 +149,9 @@ def get_lidar_param(verbose=False):
     lidar_param["Y_deg"] = Y_deg
     lidar_param["RPY_deg"] = RPY_deg
     lidar_param["RPY_rad"] = RPY_rad
-    lidar_param["B_Rot_L"] = B_R_L
-    lidar_param["B_pos_L"] = B_p_L
-    lidar_param["B_T_L"] = get_T(B_R_L, B_p_L)
+    lidar_param["V_Rot_L"] = V_R_L
+    lidar_param["V_pos_L"] = V_p_L
+    lidar_param["V_T_L"] = get_T(V_R_L, V_p_L)
     lidar_param["FOV"] = 190
     lidar_param["start_angle"] = -5
     lidar_param["end_angle"] = 185
@@ -162,6 +162,39 @@ def get_lidar_param(verbose=False):
     lidar_param["info"] = "* LiDAR rays with value 0.0 represent infinite range observations."
 
     return lidar_param
+
+
+def get_FOG_param() -> dict:
+    """
+    FOG (Fiber Optic Gyro) extrinsic calibration parameter from vehicle
+    RPY(roll/pitch/yaw = XYZ extrinsic, degree), R(rotation matrix), T(translation matrix, meter)
+    RPY: [0. 0. 0.]
+    R: [1 0 0, 0 1 0, 0 0 1]
+    T: [-0.335, -0.035, 0.78]
+    * The sensor measurements are stored as [timestamp, delta roll, delta pitch, delta yaw] in radians.
+    """
+    R_deg, P_deg, Y_deg = (0.0, 0.0, 0.0)
+    RPY = namedtuple("RPY_angle", ["roll_angle", "pitch_angle", "yaw_angle"])
+    RPY_deg = RPY(R_deg, P_deg, Y_deg)
+    RPY_rad = np.deg2rad(RPY(R_deg, P_deg, Y_deg))
+
+    V_R_F = np.eye(3, dtype=np.float64)
+    # position [x,y,z].T denoted as V_p_F
+    V_p_F =np.array([-0.335, -0.035, 0.78], dtype=np.float64)
+
+    FOG_param = dict()
+    FOG_param["R_deg"] = R_deg
+    FOG_param["P_deg"] = P_deg
+    FOG_param["Y_deg"] = Y_deg
+    FOG_param["RPY_deg"] = RPY_deg
+    FOG_param["RPY_rad"] = RPY_rad
+    FOG_param["V_Rot_F"] = V_R_F
+    FOG_param["V_pos_F"] = V_p_F
+    FOG_param["V_T_F"] = get_T(V_R_F, V_p_F)
+    FOG_param["info"] = "* FOG measurements are stored as [timestamp, delta roll, delta pitch, delta yaw] in " \
+                        "radians. "
+
+    return FOG_param
 
 
 def split2two(input_data: np.ndarray):
@@ -237,16 +270,16 @@ def reg2homo(X: np.ndarray)-> np.ndarray:
     return X_
 
 
-def lidar2body(s_L, b_R_l, pos)-> np.ndarray:
+def transform(s_L, b_R_l, pos)-> np.ndarray:
     """
-    Covert from Lidar frame to Body frame
+    Covert from Lidar frame to vehicle frame
     :param s_L: point cloud from laser scanner in regular coordinates will transform to homogenous
     :type :numpy.array
     :param b_R_l: rotation matrix from lidar frame to body frame
     :type : numpy.array
-    :param pos: position in body frame
+    :param pos: position in vehicle frame
     :type : numpy.array
-    :return: s_B [x,y,z].T coordinate in body frame
+    :return: s_V [x,y,z].T coordinate in vehicle frame
     """
     assert isinstance(s_L, np.ndarray)
     assert isinstance(b_R_l, np.ndarray)
@@ -255,12 +288,14 @@ def lidar2body(s_L, b_R_l, pos)-> np.ndarray:
 
     T_l = get_T(b_R_l, pos)
     # print(f"B_T_L: {T_l}")
-    ''' s_B = T{L} @ s_L in homogenous coord'''
-    s_B = T_l @ reg2homo(s_L)  # Transform to homogenous coord
+    ''' s_V = T{L} @ s_L in homogenous coord'''
+    s_V = T_l @ reg2homo(s_L)  # Transform to homogenous coord
     # remove dummy ones [x,y,z].T->[x,y,z,1].T: 4x286 -> 3x286
-    s_B = np.delete(s_B, 3, axis=0)
-    # print(s_B.shape) # 3x286
-    return s_B
+    s_V = np.delete(s_V, 3, axis=0)
+    # print(s_V.shape) # 3x286
+    return s_V
+
+
 
 
 def main():
@@ -276,30 +311,36 @@ if __name__ == '__main__':
     print(f"lidar_data: {lidar_data.shape}\n")
     utils.toc(start_load, "Finish loading raw lidar data")
 
-    # Get lidar_param (R, p), from lidar to vehicle
+    # Get lidar_param, FOG_param
     lidar_param = get_lidar_param(verbose=False)
-    R = lidar_param["B_Rot_L"]
-    p = lidar_param["B_pos_L"]
-    print(f"lidar2vehicle_param[R]: {R.shape}\n{R}")
-    print(f"lidar2vehicle_param[p]: {p.shape}\n{p}\n")
+    FOG_param = get_FOG_param()
+
+    R = lidar_param["V_Rot_L"]
+    p = lidar_param["V_pos_L"]
+    # print(f"lidar2vehicle_param[R]: {R.shape}\n{R}")
+    # print(f"lidar2vehicle_param[p]: {p.shape}\n{p}\n")
     ###################################################################################
     '''
     Use the first laser scan to initialize and display the map to make sure your transforms are correct:
-        1. convert the scan to cartesian coordinates
-        2. transform the scan from the lidar frame to the body frame and then to the world frame
-        3. convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
+    1. convert the scan to cartesian coordinates
+    2. transform the scan from the lidar frame to the body frame and then to the world frame
+        At t=0, you can assume that the body frame and the world frame are perfectly aligned.
+        For t>0 you need to localize the robot in order to find the transformation between body and world.
+    3. convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
     '''
     start_trans = utils.tic()
     # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros -- step1
     s_L0 = polar2xyz(lidar_data, lidar_param, index=0, verbose=False)
     print(f"s_L[0]: {s_L0.shape}")
-    '''
-    At t=0, you can assume that the body frame and the world frame are perfectly aligned.
-    For t>0 you need to localize the robot in order to find the transformation between vehicle and world.
-    '''
-    # Transform from lidar frame to body frame s_B in [x,y,z].T
-    s_B0 = lidar2body(s_L0, R, p)
-    print(f"s_B[0]: {s_B0.shape}")
+
+    # Transform from lidar frame to vehicle frame s_B in [x,y,z].T
+    s_V0 = transform(s_L0, R, p)    # s_L -> s_V
+    print(f"s_V[0]: {s_V0.shape}")
+
+    # Define FOG frame to be the body frame, coincide with vehicle frame
+    p_B = FOG_param["V_pos_F"]
+    s_B0 = s_V0 - p_B.reshape(3, 1)
+    print(f"s_B[0]: {s_V0.shape}")
 
     # Body frame and the world frame are perfectly aligned t=0 -> s_W = I@s_B + 0 -- step2
     s_W0 = s_B0
@@ -314,23 +355,23 @@ if __name__ == '__main__':
     # Assign each point to a specific cell in the map and then do bresenham2D
     # convert nx(x,y) to row and columns
 
-    # init MAP
-    MAP = dict()
-    MAP['res'] = 0.1  # meters
-    MAP['xmin'] = -70  # meters
-    MAP['ymin'] = -70
-    MAP['xmax'] = 70
-    MAP['ymax'] = 70
-    MAP['sizex'] = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1))  # cells
-    MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
-    MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
-
-    xs0 = s_W0[0, :]
-    ys0 = s_W0[1, :]
-
-    show_laserXY(xs0, ys0)
-
-
-    # convert from meters to cells
-    xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
-    yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
+    # # init MAP
+    # MAP = dict()
+    # MAP['res'] = 0.1  # meters
+    # MAP['xmin'] = -70  # meters
+    # MAP['ymin'] = -70
+    # MAP['xmax'] = 70
+    # MAP['ymax'] = 70
+    # MAP['sizex'] = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1))  # cells
+    # MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
+    # MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
+    #
+    # xs0 = s_W0[0, :]
+    # ys0 = s_W0[1, :]
+    #
+    # show_laserXY(xs0, ys0)
+    #
+    #
+    # # convert from meters to cells
+    # xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
+    # yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
