@@ -134,3 +134,5 @@ dmypy.json
 
 #
 *.zip
+PR2_env/
+.idea/
