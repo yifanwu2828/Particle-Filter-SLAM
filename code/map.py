@@ -344,7 +344,7 @@ if __name__ == '__main__':
 
     # Define FOG frame to be the body frame, coincide with vehicle frame
     p_B = FOG_param["V_pos_F"]
-    s_B0 = s_V0 - p_B.reshape(3, 1)
+    s_B0 = s_V0 - p_B.reshape(3, 1)  # s_V -> s_F
     print(f"s_B[0]: {s_V0.shape}")
 
     # Body frame and the world frame are perfectly aligned t=0 -> s_W = I@s_B + 0 -- step2
@@ -362,23 +362,23 @@ if __name__ == '__main__':
     # Assign each point to a specific cell in the map and then do bresenham2D
     # convert nx(x,y) to row and columns
 
-    # # init MAP
-    # MAP = dict()
-    # MAP['res'] = 0.1  # meters
-    # MAP['xmin'] = -70  # meters
-    # MAP['ymin'] = -70
-    # MAP['xmax'] = 70
-    # MAP['ymax'] = 70
-    # MAP['sizex'] = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1))  # cells
-    # MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
-    # MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
-    #
-    # xs0 = s_W0[0, :]
-    # ys0 = s_W0[1, :]
-    #
-    # show_laserXY(xs0, ys0)
-    #
-    #
-    # # convert from meters to cells
-    # xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
-    # yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
+    # init MAP
+    MAP = dict()
+    MAP['res'] = 0.5  # meters
+    MAP['xmin'] = -70  # meters
+    MAP['ymin'] = -70
+    MAP['xmax'] = 70
+    MAP['ymax'] = 70
+    MAP['sizex'] = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1))  # cells
+    MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
+    MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
+
+    xs0 = s_W0[0, :]
+    ys0 = s_W0[1, :]
+
+    show_laserXY(xs0, ys0)
+
+
+    # convert from meters to cells
+    xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
+    yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
