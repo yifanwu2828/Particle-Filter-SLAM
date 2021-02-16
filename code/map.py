@@ -115,10 +115,10 @@ def get_lidar_param(verbose=False):
     RPY_rad = np.deg2rad(RPY(R_deg, P_deg, Y_deg))
 
     B_R_L = np.array([[0.00130201, 0.796097, 0.605167],
-                  [0.999999, -0.000419027, -0.00160026],
-                  [-0.00102038, 0.605169, -0.796097]
-                  ],
-                 dtype=np.float64)
+                      [0.999999, -0.000419027, -0.00160026],
+                      [-0.00102038, 0.605169, -0.796097]
+                      ],
+                     dtype=np.float64)
     # position [x,y,z].T denoted as B_p_L
     B_p_L = np.array([0.8349, -0.0126869, 1.76416], dtype=np.float64)
 
@@ -231,7 +231,7 @@ def lidar2body(s_L, b_R_l, pos)-> np.ndarray:
     :type :numpy.array
     :param b_R_l: rotation matrix from lidar frame to body frame
     :type : numpy.array
-    :param s_L: position in body frame
+    :param pos: position in body frame
     :type : numpy.array
     :return: s_B [x,y,z].T coordinate in body frame
     """
