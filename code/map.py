@@ -302,7 +302,7 @@ if __name__ == '__main__':
     # convert nx(x,y) to row and columns
 
     # init MAP
-    MAP = {}
+    MAP = dict()
     MAP['res'] = 0.1  # meters
     MAP['xmin'] = -70  # meters
     MAP['ymin'] = -70
