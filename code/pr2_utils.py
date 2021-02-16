@@ -205,7 +205,7 @@ def test_mapCorrelation():
     ts = tic()
     c = mapCorrelation(MAP['map'],x_im,y_im,Y,x_range,y_range)
     print(c)
-    toc(ts,"Map Correlation")
+    toc(ts, "Map Correlation")
 
     c_ex = np.array([[ 4.,  6.,  6.,  5.,  8.,  6.,  3.,  2.,  0.],
                      [ 7.,  5., 11.,  8.,  5.,  8.,  5.,  4.,  2.],
@@ -229,17 +229,19 @@ def test_mapCorrelation():
     plt.ylabel("y")
     plt.title("Laser reading")
     plt.axis('equal')
+    plt.show()
 
     # plot map
     fig2 = plt.figure()
-    plt.imshow(MAP['map'],cmap="hot");
+    plt.imshow(MAP['map'], cmap="hot")
     plt.title("Occupancy grid map")
+    plt.show()
 
     # plot correlation
     fig3 = plt.figure()
     ax3 = fig3.gca(projection='3d')
     X, Y = np.meshgrid(np.arange(0,9), np.arange(0,9))
-    ax3.plot_surface(X,Y,c,linewidth=0,cmap=plt.cm.jet, antialiased=False,rstride=1, cstride=1)
+    ax3.plot_surface(X, Y, c, linewidth=0, cmap=plt.cm.jet, antialiased=False, rstride=1, cstride=1)
     plt.title("Correlation coefficient map")
 
     plt.show()
