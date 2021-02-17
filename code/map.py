@@ -13,7 +13,7 @@ def split2two(input_data: np.ndarray):
     return input_data[:, 0], input_data[:, 1:]
 
 
-def show_image()-> None:
+def show_image() -> None:
     """
     Show Vehicle dimensions and coordinates
     """
@@ -37,7 +37,7 @@ def show_lidar(angles: np.ndarray, ranges: np.ndarray) -> None:
     plt.show()
 
 
-def show_laserXY(xs, ys)-> None:
+def show_laserXY(xs, ys) -> None:
     """
     plot lidar points in cartesian coordinate
     """
@@ -61,7 +61,7 @@ def cartesian2polar(x, y):
     :return r:ranges in meters
             theta: angles in radians
     """
-    r = np.sqrt(x**2 + y**2)
+    r = np.sqrt(x ** 2 + y ** 2)
     theta = np.arctan2(y, x)
     return r, theta
 
@@ -174,12 +174,17 @@ def get_lidar_param(verbose=False) -> dict:
     lidar_param["max_range"] = 80
     lidar_param["min_range"] = 2
     lidar_param["angular_resolution"] = 0.666
-    lidar_param["info"] = "* LiDAR rays with value 0.0 represent infinite range observations."
-
+    info = """FOV: 190 (degree), Start angle: -5 (degree), End angle: 185 (degree),
+    Angular resolution: 0.666 (degree)
+    Max range: 80 (meter)
+    * LiDAR rays with value 0.0 represent infinite range observations."""
+    lidar_param["info"] = info
+    if verbose:
+        print(f"lidar_param_INFO: {info}")
     return lidar_param
 
 
-def get_FOG_param() -> dict:
+def get_FOG_param(verbose=False) -> dict:
     """
     FOG (Fiber Optic Gyro) extrinsic calibration parameter from vehicle
     RPY(roll/pitch/yaw = XYZ extrinsic, degree), R(rotation matrix), T(translation matrix, meter)
@@ -196,7 +201,7 @@ def get_FOG_param() -> dict:
 
     V_R_F = np.eye(3, dtype=np.float64)
     # position [x,y,z].T denoted as V_p_F
-    V_p_F =np.array([-0.335, -0.035, 0.78], dtype=np.float64)
+    V_p_F = np.array([-0.335, -0.035, 0.78], dtype=np.float64)
 
     FOG_param = dict()
     FOG_param["R_deg"] = R_deg
@@ -207,13 +212,15 @@ def get_FOG_param() -> dict:
     FOG_param["V_Rot_F"] = V_R_F
     FOG_param["V_pos_F"] = V_p_F
     FOG_param["V_T_F"] = get_T(V_R_F, V_p_F)
-    FOG_param["info"] = "* FOG measurements are stored as [timestamp, delta roll, delta pitch, delta yaw] in " \
+    info = "* FOG measurements are stored as [timestamp, delta roll, delta pitch, delta yaw] in " \
                         "radians. "
-
+    FOG_param["info"] = info
+    if verbose:
+        print(f"FOG_param_INFO: {info}")
     return FOG_param
 
 
-def get_encoder_param() -> dict():
+def get_encoder_param(verbose=False) -> dict():
     """
     Encoder calibrated parameter
     Encoder resolution: 4096
@@ -229,7 +236,10 @@ def get_encoder_param() -> dict():
     encoder_param["left_diameter"] = 0.623479
     encoder_param["right_diameter"] = 0.622806
     encoder_param["base"] = 1.52439
-    encoder_param["info"] = "* The encoder data is stored as [timestamp, left count, right count]."
+    info = "* The encoder data is stored as [timestamp, left count, right count]."
+    encoder_param["info"] = info
+    if verbose:
+        print(f"encoder_param_INFO:{info}")
     return encoder_param
 
 
@@ -261,7 +271,7 @@ def get_R(x: float, y: float, z: float) -> np.ndarray:
     return np.dot(np.dot(R_z, R_y), R_x)
 
 
-def get_T(Rot: np.ndarray, pos: np.ndarray)-> np.ndarray:
+def get_T(Rot: np.ndarray, pos: np.ndarray) -> np.ndarray:
     """
     Calculate Rigid Body Pose
     :param: R: rotation matrix
@@ -284,7 +294,7 @@ def get_T(Rot: np.ndarray, pos: np.ndarray)-> np.ndarray:
     return T
 
 
-def reg2homo(X: np.ndarray)-> np.ndarray:
+def reg2homo(X: np.ndarray) -> np.ndarray:
     """
     Convert Matrix to homogenous coordinate
     :param X: matrix/vector
@@ -299,7 +309,7 @@ def reg2homo(X: np.ndarray)-> np.ndarray:
     return X_
 
 
-def transform(s_L, b_R_l, pos)-> np.ndarray:
+def transform(s_L, b_R_l, pos) -> np.ndarray:
     """
     Covert from Lidar frame to vehicle frame
     :param s_L: point cloud from laser scanner in regular coordinates will transform to homogenous
@@ -341,8 +351,8 @@ if __name__ == '__main__':
 
     # Get lidar_param, FOG_param
     lidar_param = get_lidar_param(verbose=False)
-    FOG_param = get_FOG_param()
-    encoder_param = get_encoder_param()
+    FOG_param = get_FOG_param(verbose=False)
+    encoder_param = get_encoder_param(verbose=False)
 
     R = lidar_param["V_Rot_L"]
     p = lidar_param["V_pos_L"]
@@ -363,7 +373,7 @@ if __name__ == '__main__':
     print(f"s_L[0]: {s_L0.shape}")
 
     # Transform from lidar frame to vehicle frame s_B in [x,y,z].T
-    s_V0 = transform(s_L0, R, p)    # s_L -> s_V
+    s_V0 = transform(s_L0, R, p)  # s_L -> s_V
     print(f"s_V[0]: {s_V0.shape}")
 
     # Define FOG frame to be the body frame, coincide with vehicle frame
