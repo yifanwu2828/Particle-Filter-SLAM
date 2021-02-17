@@ -13,13 +13,16 @@ def split2two(input_data: np.ndarray):
     return input_data[:, 0], input_data[:, 1:]
 
 
-def show_image():
+def show_image()-> None:
+    """
+    Show Vehicle dimensions and coordinates
+    """
     vehicle_img = plt.imread("data/vehicle_cofig.png")
     plt.imshow(vehicle_img)
     plt.show()
 
 
-def show_lidar(angles, ranges):
+def show_lidar(angles: np.ndarray, ranges: np.ndarray) -> None:
     """
     Show lidar in polar coordinates
     """
@@ -34,7 +37,7 @@ def show_lidar(angles, ranges):
     plt.show()
 
 
-def show_laserXY(xs, ys):
+def show_laserXY(xs, ys)-> None:
     """
     plot lidar points in cartesian coordinate
     """
@@ -76,7 +79,7 @@ def polar2cartesian(r, theta):
     return a.real, a.imag
 
 
-def polar2xyz(lidar_data, lidar_param, index=0, verbose=False) -> np.ndarray:
+def polar2xyz(lidar_data: np.ndarray, lidar_param: dict, index=0, verbose=False) -> np.ndarray:
     """
     Convert from polar coordinates to cartesian coordinate with z axis fill with zeros
     Remove scan points that are too close or too far,

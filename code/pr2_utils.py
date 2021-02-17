@@ -12,7 +12,7 @@ def tic():
 
 
 def toc(tstart, name="Operation"):
-    print('############ %s took: %s sec. ############\n' % (name,(time.time() - tstart)))
+    print(f'############ {name} took: {(time.time() - tstart):.4f} sec. ############\n')
 
 
 def compute_stereo():
@@ -43,14 +43,14 @@ def compute_stereo():
 
 
 def read_data_from_csv(filename):
-    '''
+    """
     INPUT
     filename        file address
 
     OUTPUT
     timestamp       timestamp of each observation
     data            a numpy array containing a sensor measurement in each row
-    '''
+    """
     data_csv = pd.read_csv(filename, header=None)
     data = data_csv.values[:, 1:]
     timestamp = data_csv.values[:, 0]
