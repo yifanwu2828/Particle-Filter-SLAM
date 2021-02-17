@@ -2,6 +2,7 @@ from collections import namedtuple
 
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 
 import pr2_utils as utils
 
@@ -335,17 +336,37 @@ def transform(s_L, b_R_l, pos) -> np.ndarray:
     return s_V
 
 
+def get_new_encoder_df(fname: str, verbose=False)->pd.DataFrame:
+    """
+    Get new encoder dataframe
+    :param fname:
+    :type fname: str
+    :param verbose: bool
+    :return: encoder dataframe
+    """
+    encoder_df = pd.read_csv(fname)
+    print(f"encoder_df:{encoder_df.shape}")
+    df = np.diff(encoder_df, axis=0)
+    new = {'dt': df[:, 0] * 1e-9, 'dlz': df[:, 1], 'drz': df[:, 2]}
+    new_df = pd.DataFrame(data=new)
+    encoder_param = get_encoder_param(verbose=False)
+    dL = encoder_param["left_diameter"]
+    dR = encoder_param["right_diameter"]
+    res = encoder_param["ticks_per_revolution"]
+    new_df["distance_left"] = np.pi * dL / res * new_df["dlz"]
+    new_df["distance_right"] = np.pi * dR / res * new_df["drz"]
+    new_df['velocity_left'] = new_df["distance_left"] / new_df["dt"]
+    new_df['velocity_right'] = new_df["distance_right"] / new_df["dt"]
+    new_df['linear_velocity(m/s)'] = (new_df['velocity_left'] + new_df['velocity_right']) / 2.0
+    if verbose:
+        print(new_df.head())
+    return new_df
+
+
 def main():
-    pass
-
-
-if __name__ == '__main__':
-    np.seterr(all='raise')
-    show_image()
-
     start_load = utils.tic()
-    timestamp, lidar_data = utils.read_data_from_csv('data/sensor_data/lidar.csv')
-    print(f"timestamp: {timestamp.shape}")
+    timestamp_lidar, lidar_data = utils.read_data_from_csv('data/sensor_data/lidar.csv')
+    print(f"timestamp_lidar: {timestamp_lidar.shape}")
     print(f"lidar_data: {lidar_data.shape}\n")
     utils.toc(start_load, "Finish loading raw lidar data")
 
@@ -390,12 +411,10 @@ if __name__ == '__main__':
     utils.toc(start_trans, "Transform from laser to body s_L -> s_B -> s_W at t = 0")
     ######################################################################################
 
-    # At t=0 assume robots locate at (0,0)
-    # TODO: explore the max and min range in encoder
+    # At t=0 assume robots locate at (0,0) and orientation 0
     # TODO: step3: convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
     # Assign each point to a specific cell in the map and then do bresenham2D
     # convert nx(x,y) to row and columns
-
     # # init MAP
     # MAP = dict()
     # MAP['res'] = 0.5  # meters
@@ -415,3 +434,17 @@ if __name__ == '__main__':
     # # convert from meters to cells
     # xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
     # yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
+    pass
+
+
+if __name__ == '__main__':
+    np.seterr(all='raise')
+    show_image()
+    # TODO: dead reckoning
+    # * The sensor measurements are stored as [timestamp, delta roll, delta pitch, delta yaw] in radians.
+    # timestamp_fog, fog_data = utils.read_data_from_csv('data/sensor_data/fog.csv')
+    encoder_fname = 'data/sensor_data/encoder.csv'
+    encoder_df = get_new_encoder_df(encoder_fname, verbose=False)
+
+
+
