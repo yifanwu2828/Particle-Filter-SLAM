@@ -129,14 +129,13 @@ def get_lidar_param(verbose=False) -> dict:
     Angular resolution: 0.666 (degree)
     Max range: 80 (meter)
     * LiDAR rays with value 0.0 represent infinite range observations.
-    """
-    """
+
     Lidar sensor (LMS511) extrinsic calibration parameter from vehicle
     RPY(roll/pitch/yaw = XYZ extrinsic, degree), R(rotation matrix), T(translation matrix)
     RPY: 142.759 0.0584636 89.9254
     R: 0.00130201 0.796097 0.605167, 0.999999 -0.000419027 -0.00160026, -0.00102038 0.605169 -0.796097
     T: 0.8349 -0.0126869 1.76416
-    return R (3x3 rotation matrix), T(3x1 translation matrix), RPY_deg,
+    :return: lidar_param
     """
     R_deg, P_deg, Y_deg = (142.759, 0.0584636, 89.9254)
     RPY = namedtuple("RPY_angle", ["roll_angle", "pitch_angle", "yaw_angle"])
@@ -188,6 +187,7 @@ def get_FOG_param() -> dict:
     R: [1 0 0, 0 1 0, 0 0 1]
     T: [-0.335, -0.035, 0.78]
     * The sensor measurements are stored as [timestamp, delta roll, delta pitch, delta yaw] in radians.
+    :return: FOG_param
     """
     R_deg, P_deg, Y_deg = (0.0, 0.0, 0.0)
     RPY = namedtuple("RPY_angle", ["roll_angle", "pitch_angle", "yaw_angle"])
@@ -211,6 +211,26 @@ def get_FOG_param() -> dict:
                         "radians. "
 
     return FOG_param
+
+
+def get_encoder_param() -> dict():
+    """
+    Encoder calibrated parameter
+    Encoder resolution: 4096
+    Encoder left wheel diameter: 0.623479
+    Encoder right wheel diameter: 0.622806
+    Encoder wheel base: 1.52439
+
+    * The encoder data is stored as [timestamp, left count, right count].
+    :return: encoder_param
+    """
+    encoder_param = dict()
+    encoder_param["ticks_per_revolution"] = 4096
+    encoder_param["left_diameter"] = 0.623479
+    encoder_param["right_diameter"] = 0.622806
+    encoder_param["base"] = 1.52439
+    encoder_param["info"] = "* The encoder data is stored as [timestamp, left count, right count]."
+    return encoder_param
 
 
 def get_R(x: float, y: float, z: float) -> np.ndarray:
@@ -322,6 +342,7 @@ if __name__ == '__main__':
     # Get lidar_param, FOG_param
     lidar_param = get_lidar_param(verbose=False)
     FOG_param = get_FOG_param()
+    encoder_param = get_encoder_param()
 
     R = lidar_param["V_Rot_L"]
     p = lidar_param["V_pos_L"]
@@ -365,23 +386,22 @@ if __name__ == '__main__':
     # Assign each point to a specific cell in the map and then do bresenham2D
     # convert nx(x,y) to row and columns
 
-    # init MAP
-    MAP = dict()
-    MAP['res'] = 0.5  # meters
-    MAP['xmin'] = -70  # meters
-    MAP['ymin'] = -70
-    MAP['xmax'] = 70
-    MAP['ymax'] = 70
-    MAP['sizex'] = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1))  # cells
-    MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
-    MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
-
-    xs0 = s_W0[0, :]
-    ys0 = s_W0[1, :]
-
-    show_laserXY(xs0, ys0)
-
-
-    # convert from meters to cells
-    xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
-    yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
+    # # init MAP
+    # MAP = dict()
+    # MAP['res'] = 0.5  # meters
+    # MAP['xmin'] = -70  # meters
+    # MAP['ymin'] = -70
+    # MAP['xmax'] = 70
+    # MAP['ymax'] = 70
+    # MAP['sizex'] = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1))  # cells
+    # MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
+    # MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
+    #
+    # xs0 = s_W0[0, :]
+    # ys0 = s_W0[1, :]
+    #
+    # show_laserXY(xs0, ys0)
+    #
+    # # convert from meters to cells
+    # xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
+    # yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
