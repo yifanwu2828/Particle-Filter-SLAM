@@ -347,7 +347,8 @@ def get_new_encoder_df(fname: str, verbose=False) -> pd.DataFrame:
     encoder_df = pd.read_csv(fname, names=["encoder_timestamp", "left_count", "right_count"])
     print(f"encoder_df:{encoder_df.shape}")
     df = np.diff(encoder_df, axis=0)
-    # Convert dt from nanosec to sec
+    df = np.vstack(([0, 0, 0], df))
+    # Convert dt from nanosecond to sec
     new = {'dt': df[:, 0] * 1e-9, 'dlz': df[:, 1], 'drz': df[:, 2]}
     new_df = pd.DataFrame(data=new)
     encoder_param = get_encoder_param(verbose=False)
@@ -359,9 +360,28 @@ def get_new_encoder_df(fname: str, verbose=False) -> pd.DataFrame:
     new_df['velocity_left'] = new_df["distance_left"] / new_df["dt"]
     new_df['velocity_right'] = new_df["distance_right"] / new_df["dt"]
     new_df['linear_velocity(m/s)'] = (new_df['velocity_left'] + new_df['velocity_right']) / 2.0
+    new_df.fillna(0, inplace=True)
     if verbose:
         print(new_df.head())
     return new_df
+
+
+def differential_drive_model(Xt, ut, tao):
+    """
+    Discrete-time Differential-drive Kinematic Model
+    :param Xt: state   [x, y, theta].T (x_pos, y_pos, yaw_angle_rad)
+    :param ut: control [vt, wt]      (linearVelocity, angularVelocity)
+    :param tao: time duration
+    :return: xt+1, yt+1, theta_t+1
+    """
+    theta_t = Xt[3, 1]
+    vt, wt = ut
+    dx = np.array([[vt * np.cos(theta_t)],
+                   [vt * np.sin(theta_t)],
+                   [wt]
+                   ],
+                  dtype=np.float64)
+    return Xt + tao * dx
 
 
 def main():
@@ -441,12 +461,19 @@ def main():
 
 if __name__ == '__main__':
     np.seterr(all='raise')
-    # pd.pandas.set_option('display.max_columns', None)
+    pd.pandas.set_option('display.max_columns', None)
     show_image()
     # TODO: dead reckoning with IMU, encoder and differential driving model
     # * The sensor measurements are stored as [timestamp, delta roll, delta pitch, delta yaw] in radians.
+    start_load = utils.tic()
     fog_fname = 'data/sensor_data/fog.csv'
     fog_df = pd.read_csv(fog_fname, names=["FOG_timestamp", "delta_roll", "delta_pitch", "delta_yaw"])
+    print(f"fog_df:{fog_df.shape}")
     encoder_fname = 'data/sensor_data/encoder.csv'
     encoder_df = get_new_encoder_df(encoder_fname, verbose=False)
 
+    X0 = np.zeros((3, 1))
+    # X1 = differential_drive_model(X0,)
+
+
+    utils.toc(start_load, "Finish loading raw lidar data")
