@@ -42,7 +42,7 @@ def show_laserXY(xs, ys) -> None:
     """
     plot lidar points in cartesian coordinate
     """
-    fig1 = plt.figure()
+    # fig1 = plt.figure()
     plt.plot(xs, ys, '.k')
     plt.xlabel("x")
     plt.ylabel("y")
@@ -214,14 +214,14 @@ def get_FOG_param(verbose=False) -> dict:
     FOG_param["V_pos_F"] = V_p_F
     FOG_param["V_T_F"] = get_T(V_R_F, V_p_F)
     info = "* FOG measurements are stored as [timestamp, delta roll, delta pitch, delta yaw] in " \
-                        "radians. "
+           "radians. "
     FOG_param["info"] = info
     if verbose:
         print(f"FOG_param_INFO: {info}")
     return FOG_param
 
 
-def get_encoder_param(verbose=False) -> dict():
+def get_encoder_param(verbose=False) -> dict:
     """
     Encoder calibrated parameter
     Encoder resolution: 4096
@@ -336,7 +336,7 @@ def transform(s_L, b_R_l, pos) -> np.ndarray:
     return s_V
 
 
-def get_new_encoder_df(fname: str, verbose=False)->pd.DataFrame:
+def get_new_encoder_df(fname: str, verbose=False) -> pd.DataFrame:
     """
     Get new encoder dataframe
     :param fname:
@@ -344,9 +344,10 @@ def get_new_encoder_df(fname: str, verbose=False)->pd.DataFrame:
     :param verbose: bool
     :return: encoder dataframe
     """
-    encoder_df = pd.read_csv(fname)
+    encoder_df = pd.read_csv(fname, names=["encoder_timestamp", "left_count", "right_count"])
     print(f"encoder_df:{encoder_df.shape}")
     df = np.diff(encoder_df, axis=0)
+    # Convert dt from nanosec to sec
     new = {'dt': df[:, 0] * 1e-9, 'dlz': df[:, 1], 'drz': df[:, 2]}
     new_df = pd.DataFrame(data=new)
     encoder_param = get_encoder_param(verbose=False)
@@ -365,7 +366,8 @@ def get_new_encoder_df(fname: str, verbose=False)->pd.DataFrame:
 
 def main():
     start_load = utils.tic()
-    timestamp_lidar, lidar_data = utils.read_data_from_csv('data/sensor_data/lidar.csv')
+    lidar_fname = 'data/sensor_data/lidar.csv'
+    timestamp_lidar, lidar_data = utils.read_data_from_csv(lidar_fname)
     print(f"timestamp_lidar: {timestamp_lidar.shape}")
     print(f"lidar_data: {lidar_data.shape}\n")
     utils.toc(start_load, "Finish loading raw lidar data")
@@ -439,12 +441,12 @@ def main():
 
 if __name__ == '__main__':
     np.seterr(all='raise')
+    # pd.pandas.set_option('display.max_columns', None)
     show_image()
-    # TODO: dead reckoning
+    # TODO: dead reckoning with IMU, encoder and differential driving model
     # * The sensor measurements are stored as [timestamp, delta roll, delta pitch, delta yaw] in radians.
-    # timestamp_fog, fog_data = utils.read_data_from_csv('data/sensor_data/fog.csv')
+    fog_fname = 'data/sensor_data/fog.csv'
+    fog_df = pd.read_csv(fog_fname, names=["FOG_timestamp", "delta_roll", "delta_pitch", "delta_yaw"])
     encoder_fname = 'data/sensor_data/encoder.csv'
     encoder_df = get_new_encoder_df(encoder_fname, verbose=False)
-
-
 
