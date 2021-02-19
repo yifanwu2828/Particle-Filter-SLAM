@@ -366,22 +366,56 @@ def get_new_encoder_df(fname: str, verbose=False) -> pd.DataFrame:
     return new_df
 
 
-def differential_drive_model(Xt, ut, tao):
+def differential_drive_model(Xt, ut, dt) -> np.ndarray:
     """
     Discrete-time Differential-drive Kinematic Model
     :param Xt: state   [x, y, theta].T (x_pos, y_pos, yaw_angle_rad)
     :param ut: control [vt, wt]      (linearVelocity, angularVelocity)
-    :param tao: time duration
+    :param dt: time duration
     :return: xt+1, yt+1, theta_t+1
     """
-    theta_t = Xt[3, 1]
+    theta_t = Xt[2, 0]
     vt, wt = ut
-    dx = np.array([[vt * np.cos(theta_t)],
+    dv = np.array([[vt * np.cos(theta_t)],
                    [vt * np.sin(theta_t)],
                    [wt]
                    ],
                   dtype=np.float64)
-    return Xt + tao * dx
+    return Xt + dt * dv
+
+
+def dead_reckoning(fname, verbose=False) -> None:
+    """
+    Perform dead_reckoning
+    :param fname: path and name of merged .csv
+    :type: str
+    :param verbose: bool
+    :return:
+    """
+    assert isinstance(fname, str)
+    # 'data/sync_fog_encoder_left.csv'
+    fog_encoder_df = pd.read_csv(fname)
+    num_state = fog_encoder_df.shape[0]
+    if verbose:
+        print(f"fog_encoder_df: {fog_encoder_df.shape}")
+        print(fog_encoder_df.head(5))
+
+    vt = np.array(fog_encoder_df['linear_velocity(m/s)'], dtype=np.float64)
+    wt = np.array(fog_encoder_df['delta_yaw'], dtype=np.float64)
+    tao = np.array(fog_encoder_df['dt'], dtype=np.float64)
+
+    # Assume initial state (0,0,0)
+    X0 = np.zeros((3, 1))
+    lst = []
+    for i in range(num_state):
+        lst.append(X0)
+        X0 = differential_drive_model(X0, (vt[i], wt[i]), tao[i])
+    trajectory = np.hstack(lst)
+    plt.figure()
+    plt.scatter(trajectory[0, :], trajectory[1, :])
+    plt.show()
+
+
 
 
 def main():
@@ -460,20 +494,16 @@ def main():
 
 
 if __name__ == '__main__':
+    # Running Config
     np.seterr(all='raise')
+
     pd.pandas.set_option('display.max_columns', None)
+    pd.set_option("precision", 10)
     show_image()
+
     # TODO: dead reckoning with IMU, encoder and differential driving model
-    # * The sensor measurements are stored as [timestamp, delta roll, delta pitch, delta yaw] in radians.
     start_load = utils.tic()
-    fog_fname = 'data/sensor_data/fog.csv'
-    fog_df = pd.read_csv(fog_fname, names=["FOG_timestamp", "delta_roll", "delta_pitch", "delta_yaw"])
-    print(f"fog_df:{fog_df.shape}")
-    encoder_fname = 'data/sensor_data/encoder.csv'
-    encoder_df = get_new_encoder_df(encoder_fname, verbose=False)
-
-    X0 = np.zeros((3, 1))
-    # X1 = differential_drive_model(X0,)
-
-
+    fog_encoder_left_fname = 'data/sync_fog_encoder_left.csv'
+    merge_all_fname = "data/sync_all_inner.csv"
+    dead_reckoning(merge_all_fname, verbose=True)
     utils.toc(start_load, "Finish loading raw lidar data")
