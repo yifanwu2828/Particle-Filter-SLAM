@@ -52,6 +52,19 @@ def show_laserXY(xs, ys) -> None:
     plt.show()
 
 
+def show_map(map) -> None:
+    """
+    plot Occupancy grid map
+    :param map: grid map
+    :type: numpy array
+    """
+    plt.figure()
+    plt.imshow(map, cmap="hot")
+    plt.title("Occupancy grid map")
+    plt.grid(True)
+    plt.show()
+
+
 def cartesian2polar(x, y):
     """
     convert from cartesian coordinates to polar coordinates
@@ -347,7 +360,7 @@ def dead_reckoning(path, verbose=False):
     if verbose:
         print(f"sync_fog_encoder_df: {sync_fog_encoder_df.shape}")
         print(sync_fog_encoder_df.head(5))
-    # Assume initial state (x:0,y:0,theta:0)
+    # Assume initial state Xt at t=0 = (x:0,y:0,theta:0)
     X0 = np.zeros((3, 1))
     lst = []
     for i in range(num_state):
@@ -412,9 +425,10 @@ if __name__ == '__main__':
         For t>0 you need to localize the robot in order to find the transformation between body and world.
     3. convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
     '''
-    # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros -- step1
     start_lidar = utils.tic("--------LOAD & TRANSFORM LIDAR DATA--------")
     _, lidar_data = utils.read_data_from_csv('data/sensor_data/lidar.csv')
+
+    # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros -- step1
     s_L0 = polar2xyz(lidar_data, lidar_param, index=0, verbose=False)
     print(f"s_L[0]: {s_L0.shape}")
 
@@ -432,6 +446,7 @@ if __name__ == '__main__':
     # Body frame and the world frame are perfectly aligned t=0 -> s_W = I@s_B + 0 -- step2
     s_W0_ = s_F0_
     print(f"s_W[0] (homogenous): {s_W0_.shape}")
+
     # Convert homogenous coord to xyz
     s_W0 = np.delete(s_W0_, 3, axis=0)
     print(f"s_W[0]  with z-axis: {s_W0.shape}")
@@ -443,22 +458,29 @@ if __name__ == '__main__':
     # Assign each point to a specific cell in the map and then do bresenham2D
     # convert nx(x,y) to row and columns
     start_map = utils.tic("--------INIT MAP--------")
-    x_min, x_max = 0.0, 1238.0
-    y_min, y_max = -1012.0, 0.0
-    print(f"x_min: {x_min},\t\tx_max: {x_max}")
+    x_min, x_max = 0.0 - lidar_param["max_range"], 1238.0 + lidar_param["max_range"]
+    y_min, y_max = -1012.0 - lidar_param["max_range"], 0.0 + lidar_param["max_range"]
+    print(f"x_min: {x_min},\tx_max: {x_max}")
     print(f"y_min: {y_min}, y_max: {y_max}")
+    x_half = int((x_max - x_min) / 2)
+    y_half = int((y_max - y_min) / 2)
+    print(f"x_interval: [{-x_half}, {x_half}]")
+    print(f"y_interval: [{-y_half}, {y_half}]")
 
     # init MAP
     MAP = dict()
     MAP['res'] = 0.5  # meters
-    MAP['xmin'] = x_min - lidar_param["max_range"]  # meters
-    MAP['ymin'] = y_min - lidar_param["max_range"]
-    MAP['xmax'] = x_max + lidar_param["max_range"]
-    MAP['ymax'] = y_max + lidar_param["max_range"]
+    MAP['xmin'] = -x_half     # -699
+    MAP['xmax'] = x_half      # 699
+    MAP['ymin'] = -y_half     # -586
+    MAP['ymax'] = y_half      # 586
     MAP['sizex'] = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1))  # cells
     MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
     MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
+    print(f"map resolution: {MAP['res']}")
+    print(f"map size: {MAP['map'].shape}")
 
+    # Lidar data in world frame
     xs0 = s_W0[0, :]
     ys0 = s_W0[1, :]
     show_laserXY(xs0, ys0)
@@ -467,6 +489,11 @@ if __name__ == '__main__':
     xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
     yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
 
-    # # plt.matshow(a)
-    # # plt.show()
+    # center (1398.5, 1172.5)
+    for i in range(xis.shape[0]):
+        Y = utils.bresenham2D(sx=0, sy=0, ex=xis[i], ey=yis[i])
+        for j in range(Y.shape[1]):
+            MAP['map'][Y[0, j], Y[1, j]] = -1
+
+    show_map(MAP['map'])
     utils.toc(start_map, "Finish MAP")
