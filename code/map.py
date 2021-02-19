@@ -336,36 +336,6 @@ def transform(s_L, b_R_l, pos) -> np.ndarray:
     return s_V
 
 
-def get_new_encoder_df(fname: str, verbose=False) -> pd.DataFrame:
-    """
-    Get new encoder dataframe
-    :param fname:
-    :type fname: str
-    :param verbose: bool
-    :return: encoder dataframe
-    """
-    encoder_df = pd.read_csv(fname, names=["encoder_timestamp", "left_count", "right_count"])
-    print(f"encoder_df:{encoder_df.shape}")
-    df = np.diff(encoder_df, axis=0)
-    df = np.vstack(([0, 0, 0], df))
-    # Convert dt from nanosecond to sec
-    new = {'dt': df[:, 0] * 1e-9, 'dlz': df[:, 1], 'drz': df[:, 2]}
-    new_df = pd.DataFrame(data=new)
-    encoder_param = get_encoder_param(verbose=False)
-    dL = encoder_param["left_diameter"]
-    dR = encoder_param["right_diameter"]
-    res = encoder_param["ticks_per_revolution"]
-    new_df["distance_left"] = np.pi * dL / res * new_df["dlz"]
-    new_df["distance_right"] = np.pi * dR / res * new_df["drz"]
-    new_df['velocity_left'] = new_df["distance_left"] / new_df["dt"]
-    new_df['velocity_right'] = new_df["distance_right"] / new_df["dt"]
-    new_df['linear_velocity(m/s)'] = (new_df['velocity_left'] + new_df['velocity_right']) / 2.0
-    new_df.fillna(0, inplace=True)
-    if verbose:
-        print(new_df.head())
-    return new_df
-
-
 def differential_drive_model(Xt, vt, delta_theta, dt) -> np.ndarray:
     """
     Discrete-time Differential-drive Kinematic Model
@@ -384,12 +354,13 @@ def differential_drive_model(Xt, vt, delta_theta, dt) -> np.ndarray:
     return Xt + dx
 
 
-def dead_reckoning(path, verbose=False) -> None:
+def dead_reckoning(path, verbose=False):
     """
     Perform dead_reckoning
-    :param path:
+    :param path: path to sync_fog_encoder_df
     :type: str
     :param verbose: bool
+    return (x_min, x_max), (y_min, y_max)
     """
     sync_fog_encoder_df = pd.read_csv(path)
     total_duration = (max(sync_fog_encoder_df['timestamp']) - min(sync_fog_encoder_df['timestamp'])) * 1e-3
@@ -413,6 +384,9 @@ def dead_reckoning(path, verbose=False) -> None:
     plt.scatter(trajectory[0, :], trajectory[1, :])
     plt.title("Dead Reckoning (No Noise)")
     plt.show()
+    (x_min, x_max) = np.min(trajectory[0, :]), np.max(trajectory[0, :])
+    (y_min, y_max) = np.min(trajectory[1, :]), np.max(trajectory[1, :])
+    return (x_min, x_max), (y_min, y_max)
 
 
 def main():
@@ -423,7 +397,7 @@ if __name__ == '__main__':
     # Running Config
     np.seterr(all='raise')
     pd.set_option("precision", 10)
-    VERBOSE = True
+    VERBOSE = False
     if VERBOSE:
         pd.pandas.set_option('display.max_columns', None)
 
@@ -437,6 +411,7 @@ if __name__ == '__main__':
         utils.toc(start_dead_Recon, "Finish dead_Reckoning")
     utils.toc(start_load, "Finish program")
 
+    ###################################################################################
     # Init lidar_param, FOG_param, encoder_param
     lidar_param = get_lidar_param(verbose=False)
     FOG_param = get_FOG_param(verbose=False)
@@ -478,29 +453,33 @@ if __name__ == '__main__':
     s_W0 = np.delete(s_W0, 2, axis=0)
     print(f"s_W[0] without z-axis: {s_W0.shape}")
     utils.toc(start_load, "Transform from laser to body s_L -> s_B -> s_W at t = 0")
-    ######################################################################################
 
+    ######################################################################################
     # At t=0 assume robots locate at (0,0) and orientation 0
     # TODO: step3: convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
     # Assign each point to a specific cell in the map and then do bresenham2D
     # convert nx(x,y) to row and columns
+    x_min, x_max = 0.0, 1238.0
+    y_min, y_max = -1012.0, 0.0
+    print(f"x_min: {x_min}, x_max: {x_max}")
+    print(f"y_min: {y_min}, x_max: {y_max}")
+
     # init MAP
     MAP = dict()
     MAP['res'] = 0.5  # meters
-    MAP['xmin'] = -70  # meters
-    MAP['ymin'] = -70
-    MAP['xmax'] = 70
-    MAP['ymax'] = 70
+    MAP['xmin'] = x_min - lidar_param["max_range"]  # meters
+    MAP['ymin'] = y_min - lidar_param["max_range"]
+    MAP['xmax'] = x_max + lidar_param["max_range"]
+    MAP['ymax'] = y_max + lidar_param["max_range"]
     MAP['sizex'] = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1))  # cells
     MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
     MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
 
-    # xs0 = s_W0[0, :]
-    # ys0 = s_W0[1, :]
-    #
-    # show_laserXY(xs0, ys0)
-    #
-    # # convert from meters to cells
-    # xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
-    # yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
+    xs0 = s_W0[0, :]
+    ys0 = s_W0[1, :]
+    show_laserXY(xs0, ys0)
+
+    # convert from meters to cells
+    xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
+    yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
 
