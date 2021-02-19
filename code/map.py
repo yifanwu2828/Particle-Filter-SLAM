@@ -366,75 +366,98 @@ def get_new_encoder_df(fname: str, verbose=False) -> pd.DataFrame:
     return new_df
 
 
-def differential_drive_model(Xt, ut, dt) -> np.ndarray:
+def differential_drive_model(Xt, vt, delta_theta, dt) -> np.ndarray:
     """
     Discrete-time Differential-drive Kinematic Model
+
     :param Xt: state   [x, y, theta].T (x_pos, y_pos, yaw_angle_rad)
-    :param ut: control [vt, wt]      (linearVelocity, angularVelocity)
+    :param vt: control [vt, wt]      (linearVelocity, angularVelocity)
+    :param delta_theta: yaw angle change
     :param dt: time duration
     :return: xt+1, yt+1, theta_t+1
     """
     theta_t = Xt[2, 0]
-    vt, wt = ut
     dv = np.array([[vt * np.cos(theta_t)],
                    [vt * np.sin(theta_t)],
-                   [wt]
                    ],
                   dtype=np.float64)
-    return Xt + dt * dv
+    dx = np.vstack((dt * dv, delta_theta))
+    return Xt + dx
 
 
-def dead_reckoning(fname, verbose=False) -> None:
+def dead_reckoning(merge_all_df, verbose=False) -> None:
     """
     Perform dead_reckoning
-    :param fname: path and name of merged .csv
+    :param merge_all_df: dataframe contains Lidar, FOG, encoder
     :type: str
     :param verbose: bool
     :return:
     """
-    assert isinstance(fname, str)
-    # 'data/sync_fog_encoder_left.csv'
-    fog_encoder_df = pd.read_csv(fname)
-    num_state = fog_encoder_df.shape[0]
+    num_state = merge_all_df.shape[0]
+
+    vt = np.array(merge_all_df['linear_velocity(m/s)'], dtype=np.float64)
+    delta_yaw= np.array(merge_all_df['delta_yaw'], dtype=np.float64)
+    tao = np.array(merge_all_df['dt'], dtype=np.float64)
     if verbose:
-        print(f"fog_encoder_df: {fog_encoder_df.shape}")
-        print(fog_encoder_df.head(5))
-
-    vt = np.array(fog_encoder_df['linear_velocity(m/s)'], dtype=np.float64)
-    wt = np.array(fog_encoder_df['delta_yaw'], dtype=np.float64)
-    tao = np.array(fog_encoder_df['dt'], dtype=np.float64)
-
-    # Assume initial state (0,0,0)
+        print(f"merge_all_df: {merge_all_df.shape}")
+        print(merge_all_df.head(5))
+    # Assume initial state (x:0,y:0,theta:0)
     X0 = np.zeros((3, 1))
     lst = []
     for i in range(num_state):
         lst.append(X0)
-        X0 = differential_drive_model(X0, (vt[i], wt[i]), tao[i])
+        X0 = differential_drive_model(X0, vt[i], delta_yaw[i], tao[i])
     trajectory = np.hstack(lst)
     plt.figure()
     plt.scatter(trajectory[0, :], trajectory[1, :])
+    plt.title("Dead Reckoning (No NOise)")
     plt.show()
 
 
-
-
 def main():
-    start_load = utils.tic()
-    lidar_fname = 'data/sensor_data/lidar.csv'
-    timestamp_lidar, lidar_data = utils.read_data_from_csv(lidar_fname)
-    print(f"timestamp_lidar: {timestamp_lidar.shape}")
-    print(f"lidar_data: {lidar_data.shape}\n")
-    utils.toc(start_load, "Finish loading raw lidar data")
+    pass
 
-    # Get lidar_param, FOG_param
+
+if __name__ == '__main__':
+    # Running Config
+    np.seterr(all='raise')
+    pd.set_option("precision", 10)
+    VERBOSE = True
+    if VERBOSE:
+        pd.pandas.set_option('display.max_columns', None)
+
+    # Loading data
+    start_load = utils.tic()
+    # data header ['timestamp', 'delta_yaw', 'dt', 'linear_velocity(m/s)',('angles'...) ]
+    merge_all_fname = "data/sync_all_inner.csv"
+    merge_all_df = pd.read_csv(merge_all_fname)
+    print(f"merge_all_df: {merge_all_df.shape}")
+    # timestamp in milliseconds
+    timestamp = np.array(merge_all_df["timestamp"], dtype=np.float64)
+    lidar_data = np.array(merge_all_df.drop(["timestamp", "delta_yaw",
+                                             "dt", "linear_velocity(m/s)"], axis=1), dtype=np.float64)
+    total_duration = (max(merge_all_df['timestamp']) - min(merge_all_df['timestamp'])) * 1e-3
+    print(f"timestamp_lidar: {timestamp.shape}")
+    print(f"lidar_data: {lidar_data.shape}\n")
+    print(f"total_duration:{total_duration} secs")
+    utils.toc(start_load, "Finish loading data")
+    if VERBOSE:
+        start_dead_Recon = utils.tic()
+        show_image()
+        dead_reckoning(merge_all_df, verbose=VERBOSE)
+        utils.toc(start_dead_Recon, "Finish dead_Reckoning")
+
+    # Init lidar_param, FOG_param, encoder_param
+
     lidar_param = get_lidar_param(verbose=False)
     FOG_param = get_FOG_param(verbose=False)
     encoder_param = get_encoder_param(verbose=False)
 
     R = lidar_param["V_Rot_L"]
     p = lidar_param["V_pos_L"]
-    # print(f"lidar2vehicle_param[R]: {R.shape}\n{R}")
-    # print(f"lidar2vehicle_param[p]: {p.shape}\n{p}\n")
+    print(f"lidar2vehicle_param[R]: {R.shape}\n{R}")
+    print(f"lidar2vehicle_param[p]: {p.shape}\n{p}\n")
+    utils.toc(start_load, "Initiate params")
     ###################################################################################
     '''
     Use the first laser scan to initialize and display the map to make sure your transforms are correct:
@@ -444,7 +467,6 @@ def main():
         For t>0 you need to localize the robot in order to find the transformation between body and world.
     3. convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
     '''
-    start_trans = utils.tic()
     # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros -- step1
     s_L0 = polar2xyz(lidar_data, lidar_param, index=0, verbose=False)
     print(f"s_L[0]: {s_L0.shape}")
@@ -464,7 +486,7 @@ def main():
     # Remove z-axis
     s_W0 = np.delete(s_W0, 2, axis=0)
     print(f"s_W[0] without z-axis: {s_W0.shape}")
-    utils.toc(start_trans, "Transform from laser to body s_L -> s_B -> s_W at t = 0")
+    utils.toc(start_load, "Transform from laser to body s_L -> s_B -> s_W at t = 0")
     ######################################################################################
 
     # At t=0 assume robots locate at (0,0) and orientation 0
@@ -490,20 +512,3 @@ def main():
     # # convert from meters to cells
     # xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
     # yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
-    pass
-
-
-if __name__ == '__main__':
-    # Running Config
-    np.seterr(all='raise')
-
-    pd.pandas.set_option('display.max_columns', None)
-    pd.set_option("precision", 10)
-    show_image()
-
-    # TODO: dead reckoning with IMU, encoder and differential driving model
-    start_load = utils.tic()
-    fog_encoder_left_fname = 'data/sync_fog_encoder_left.csv'
-    merge_all_fname = "data/sync_all_inner.csv"
-    dead_reckoning(merge_all_fname, verbose=True)
-    utils.toc(start_load, "Finish loading raw lidar data")
