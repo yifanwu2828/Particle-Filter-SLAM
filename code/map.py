@@ -310,32 +310,6 @@ def reg2homo(X: np.ndarray) -> np.ndarray:
     return X_
 
 
-def transform(s_L, b_R_l, pos) -> np.ndarray:
-    """
-    Covert from Lidar frame to vehicle frame
-    :param s_L: point cloud from laser scanner in regular coordinates will transform to homogenous
-    :type :numpy.array
-    :param b_R_l: rotation matrix from lidar frame to body frame
-    :type : numpy.array
-    :param pos: position in vehicle frame
-    :type : numpy.array
-    :return: s_V [x,y,z].T coordinate in vehicle frame
-    """
-    assert isinstance(s_L, np.ndarray)
-    assert isinstance(b_R_l, np.ndarray)
-    assert isinstance(pos, np.ndarray)
-    assert pos.ndim == 1
-
-    T_l = get_T(b_R_l, pos)
-    # print(f"B_T_L: {T_l}")
-    ''' s_V = T{L} @ s_L in homogenous coord'''
-    s_V = T_l @ reg2homo(s_L)  # Transform to homogenous coord
-    # remove dummy ones [x,y,z].T->[x,y,z,1].T: 4x286 -> 3x286
-    s_V = np.delete(s_V, 3, axis=0)
-    # print(s_V.shape) # 3x286
-    return s_V
-
-
 def differential_drive_model(Xt, vt, delta_theta, dt) -> np.ndarray:
     """
     Discrete-time Differential-drive Kinematic Model
@@ -397,31 +371,37 @@ if __name__ == '__main__':
     # Running Config
     np.seterr(all='raise')
     pd.set_option("precision", 10)
-    VERBOSE = True
-    if VERBOSE:
+    MAX_COL =False
+    VERBOSE = False
+    DEAD_RECON = False
+    SHOW_CONFIG = False
+    if MAX_COL:
         pd.pandas.set_option('display.max_columns', None)
-
-    # Dead Reckoning
-    start_load = utils.tic()
-    sync_fog_encoder_fname = "data/sync_fog_encoder_left.csv"
-    if VERBOSE:
+    if SHOW_CONFIG:
         show_image()
-        start_dead_Recon = utils.tic("--------DEAD-RECKONING--------")
+    # Dead Reckoning
+    if DEAD_RECON:
+        start_dead_Recon = utils.tic("--------DEAD RECKONING--------")
+        sync_fog_encoder_fname = "data/sync_fog_encoder_left.csv"
         dead_reckoning(sync_fog_encoder_fname, verbose=VERBOSE)
         utils.toc(start_dead_Recon, "Finish dead_Reckoning")
-    utils.toc(start_load, "Finish program")
 
     ###################################################################################
+    start_init = utils.tic("--------INIT SENSOR PARAM--------")
     # Init lidar_param, FOG_param, encoder_param
-    lidar_param = get_lidar_param(verbose=False)
-    FOG_param = get_FOG_param(verbose=False)
-    encoder_param = get_encoder_param(verbose=False)
+    lidar_param = get_lidar_param(verbose=VERBOSE)
+    FOG_param = get_FOG_param(verbose=VERBOSE)
+    encoder_param = get_encoder_param(verbose=VERBOSE)
 
     R = lidar_param["V_Rot_L"]
     p = lidar_param["V_pos_L"]
     print(f"lidar2vehicle_param[R]: {R.shape}\n{R}")
     print(f"lidar2vehicle_param[p]: {p.shape}\n{p}\n")
-    utils.toc(start_load, "Initiate params")
+    V_R_F = FOG_param["V_Rot_F"]
+    V_p_F = FOG_param["V_pos_F"]
+    print(f"FOG2vehicle_param[R]: {V_R_F.shape}\n{V_R_F}")
+    print(f"FOG2vehicle_param[p]: {V_p_F.shape}\n{V_p_F}\n")
+    utils.toc(start_init, "Initiate params")
 
     ###################################################################################
     '''
@@ -433,36 +413,40 @@ if __name__ == '__main__':
     3. convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
     '''
     # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros -- step1
+    start_lidar = utils.tic("--------LOAD & TRANSFORM LIDAR DATA--------")
     _, lidar_data = utils.read_data_from_csv('data/sensor_data/lidar.csv')
     s_L0 = polar2xyz(lidar_data, lidar_param, index=0, verbose=False)
     print(f"s_L[0]: {s_L0.shape}")
 
-    # Transform from lidar frame to vehicle frame s_B in [x,y,z].T
-    s_V0 = transform(s_L0, R, p)  # s_L -> s_V
-    print(f"s_V[0]: {s_V0.shape}")
+    # Transform from lidar frame to vehicle frame s_L -> s_V
+    V_T_L = get_T(R, p)
+    s_V0_ = V_T_L @ reg2homo(s_L0)
+    print(f"s_V[0](homogenous): {s_V0_.shape}")
 
     # Define FOG frame to be the body frame, coincide with vehicle frame
-    p_B = FOG_param["V_pos_F"]
-    s_B0 = s_V0 - p_B.reshape(3, 1)  # s_V -> s_F
-    print(f"s_B[0]: {s_V0.shape}")
+    V_T_F = get_T(V_R_F, V_p_F)
+    F_T_V = np.linalg.inv(V_T_F)
+    s_F0_ = F_T_V @ s_V0_   # s_V -> s_F
+    print(f"s_F[0](homogenous): {s_F0_.shape}")
 
     # Body frame and the world frame are perfectly aligned t=0 -> s_W = I@s_B + 0 -- step2
-    s_W0 = s_B0
-    print(f"s_W[0] with z-axis: {s_W0.shape}")
-    # Remove z-axis
-    s_W0 = np.delete(s_W0, 2, axis=0)
-    print(f"s_W[0] without z-axis: {s_W0.shape}")
-    utils.toc(start_load, "Transform from laser to body s_L -> s_B -> s_W at t = 0")
+    s_W0_ = s_F0_
+    print(f"s_W[0] (homogenous): {s_W0_.shape}")
+    # Convert homogenous coord to xyz
+    s_W0 = np.delete(s_W0_, 3, axis=0)
+    print(f"s_W[0]  with z-axis: {s_W0.shape}")
+    utils.toc(start_lidar, "Transform from laser to body s_L -> s_B -> s_W at t = 0")
 
     ######################################################################################
     # At t=0 assume robots locate at (0,0) and orientation 0
     # TODO: step3: convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
     # Assign each point to a specific cell in the map and then do bresenham2D
     # convert nx(x,y) to row and columns
+    start_map = utils.tic("--------INIT MAP--------")
     x_min, x_max = 0.0, 1238.0
     y_min, y_max = -1012.0, 0.0
-    print(f"x_min: {x_min}, x_max: {x_max}")
-    print(f"y_min: {y_min}, x_max: {y_max}")
+    print(f"x_min: {x_min},\t\tx_max: {x_max}")
+    print(f"y_min: {y_min}, y_max: {y_max}")
 
     # init MAP
     MAP = dict()
@@ -483,5 +467,6 @@ if __name__ == '__main__':
     xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
     yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
 
-    # plt.matshow(a)
-    # plt.show()
+    # # plt.matshow(a)
+    # # plt.show()
+    utils.toc(start_map, "Finish MAP")
