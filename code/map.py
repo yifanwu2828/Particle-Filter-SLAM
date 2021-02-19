@@ -447,58 +447,60 @@ if __name__ == '__main__':
     print(f"lidar2vehicle_param[R]: {R.shape}\n{R}")
     print(f"lidar2vehicle_param[p]: {p.shape}\n{p}\n")
     utils.toc(start_load, "Initiate params")
-    # ###################################################################################
-    # '''
-    # Use the first laser scan to initialize and display the map to make sure your transforms are correct:
-    # 1. convert the scan to cartesian coordinates
-    # 2. transform the scan from the lidar frame to the body frame and then to the world frame
-    #     At t=0, you can assume that the body frame and the world frame are perfectly aligned.
-    #     For t>0 you need to localize the robot in order to find the transformation between body and world.
-    # 3. convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
-    # '''
-    # # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros -- step1
-    # s_L0 = polar2xyz(lidar_data, lidar_param, index=0, verbose=False)
-    # print(f"s_L[0]: {s_L0.shape}")
+
+    ###################################################################################
+    '''
+    Use the first laser scan to initialize and display the map to make sure your transforms are correct:
+    1. convert the scan to cartesian coordinates
+    2. transform the scan from the lidar frame to the body frame and then to the world frame
+        At t=0, you can assume that the body frame and the world frame are perfectly aligned.
+        For t>0 you need to localize the robot in order to find the transformation between body and world.
+    3. convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
+    '''
+    # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros -- step1
+    _, lidar_data = utils.read_data_from_csv('data/sensor_data/lidar.csv')
+    s_L0 = polar2xyz(lidar_data, lidar_param, index=0, verbose=False)
+    print(f"s_L[0]: {s_L0.shape}")
+
+    # Transform from lidar frame to vehicle frame s_B in [x,y,z].T
+    s_V0 = transform(s_L0, R, p)  # s_L -> s_V
+    print(f"s_V[0]: {s_V0.shape}")
+
+    # Define FOG frame to be the body frame, coincide with vehicle frame
+    p_B = FOG_param["V_pos_F"]
+    s_B0 = s_V0 - p_B.reshape(3, 1)  # s_V -> s_F
+    print(f"s_B[0]: {s_V0.shape}")
+
+    # Body frame and the world frame are perfectly aligned t=0 -> s_W = I@s_B + 0 -- step2
+    s_W0 = s_B0
+    print(f"s_W[0] with z-axis: {s_W0.shape}")
+    # Remove z-axis
+    s_W0 = np.delete(s_W0, 2, axis=0)
+    print(f"s_W[0] without z-axis: {s_W0.shape}")
+    utils.toc(start_load, "Transform from laser to body s_L -> s_B -> s_W at t = 0")
+    ######################################################################################
+
+    # At t=0 assume robots locate at (0,0) and orientation 0
+    # TODO: step3: convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
+    # Assign each point to a specific cell in the map and then do bresenham2D
+    # convert nx(x,y) to row and columns
+    # init MAP
+    MAP = dict()
+    MAP['res'] = 0.5  # meters
+    MAP['xmin'] = -70  # meters
+    MAP['ymin'] = -70
+    MAP['xmax'] = 70
+    MAP['ymax'] = 70
+    MAP['sizex'] = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1))  # cells
+    MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
+    MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
+
+    # xs0 = s_W0[0, :]
+    # ys0 = s_W0[1, :]
     #
-    # # Transform from lidar frame to vehicle frame s_B in [x,y,z].T
-    # s_V0 = transform(s_L0, R, p)  # s_L -> s_V
-    # print(f"s_V[0]: {s_V0.shape}")
+    # show_laserXY(xs0, ys0)
     #
-    # # Define FOG frame to be the body frame, coincide with vehicle frame
-    # p_B = FOG_param["V_pos_F"]
-    # s_B0 = s_V0 - p_B.reshape(3, 1)  # s_V -> s_F
-    # print(f"s_B[0]: {s_V0.shape}")
-    #
-    # # Body frame and the world frame are perfectly aligned t=0 -> s_W = I@s_B + 0 -- step2
-    # s_W0 = s_B0
-    # print(f"s_W[0] with z-axis: {s_W0.shape}")
-    # # Remove z-axis
-    # s_W0 = np.delete(s_W0, 2, axis=0)
-    # print(f"s_W[0] without z-axis: {s_W0.shape}")
-    # utils.toc(start_load, "Transform from laser to body s_L -> s_B -> s_W at t = 0")
-    # ######################################################################################
-    #
-    # # At t=0 assume robots locate at (0,0) and orientation 0
-    # # TODO: step3: convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
-    # # Assign each point to a specific cell in the map and then do bresenham2D
-    # # convert nx(x,y) to row and columns
-    # # init MAP
-    # MAP = dict()
-    # MAP['res'] = 0.5  # meters
-    # MAP['xmin'] = -70  # meters
-    # MAP['ymin'] = -70
-    # MAP['xmax'] = 70
-    # MAP['ymax'] = 70
-    # MAP['sizex'] = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1))  # cells
-    # MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
-    # MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
-    # #
-    # # xs0 = s_W0[0, :]
-    # # ys0 = s_W0[1, :]
-    # #
-    # # show_laserXY(xs0, ys0)
-    # #
-    # # # convert from meters to cells
-    # # xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
-    # # yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
+    # # convert from meters to cells
+    # xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
+    # yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
 
