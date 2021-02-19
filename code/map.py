@@ -397,7 +397,7 @@ if __name__ == '__main__':
     # Running Config
     np.seterr(all='raise')
     pd.set_option("precision", 10)
-    VERBOSE = False
+    VERBOSE = True
     if VERBOSE:
         pd.pandas.set_option('display.max_columns', None)
 
@@ -405,8 +405,8 @@ if __name__ == '__main__':
     start_load = utils.tic()
     sync_fog_encoder_fname = "data/sync_fog_encoder_left.csv"
     if VERBOSE:
-        start_dead_Recon = utils.tic()
         show_image()
+        start_dead_Recon = utils.tic("--------DEAD-RECKONING--------")
         dead_reckoning(sync_fog_encoder_fname, verbose=VERBOSE)
         utils.toc(start_dead_Recon, "Finish dead_Reckoning")
     utils.toc(start_load, "Finish program")
@@ -483,3 +483,5 @@ if __name__ == '__main__':
     xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
     yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
 
+    # plt.matshow(a)
+    # plt.show()
