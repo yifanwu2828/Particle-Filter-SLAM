@@ -369,7 +369,6 @@ def get_new_encoder_df(fname: str, verbose=False) -> pd.DataFrame:
 def differential_drive_model(Xt, vt, delta_theta, dt) -> np.ndarray:
     """
     Discrete-time Differential-drive Kinematic Model
-
     :param Xt: state   [x, y, theta].T (x_pos, y_pos, yaw_angle_rad)
     :param vt: control [vt, wt]      (linearVelocity, angularVelocity)
     :param delta_theta: yaw angle change
@@ -385,22 +384,24 @@ def differential_drive_model(Xt, vt, delta_theta, dt) -> np.ndarray:
     return Xt + dx
 
 
-def dead_reckoning(merge_all_df, verbose=False) -> None:
+def dead_reckoning(path, verbose=False) -> None:
     """
     Perform dead_reckoning
-    :param merge_all_df: dataframe contains Lidar, FOG, encoder
+    :param path:
     :type: str
     :param verbose: bool
-    :return:
     """
-    num_state = merge_all_df.shape[0]
-
-    vt = np.array(merge_all_df['linear_velocity(m/s)'], dtype=np.float64)
-    delta_yaw= np.array(merge_all_df['delta_yaw'], dtype=np.float64)
-    tao = np.array(merge_all_df['dt'], dtype=np.float64)
+    sync_fog_encoder_df = pd.read_csv(path)
+    total_duration = (max(sync_fog_encoder_df['timestamp']) - min(sync_fog_encoder_df['timestamp'])) * 1e-3
+    print(f"total_duration:{total_duration} secs")
+    assert abs(sum(sync_fog_encoder_df['dt']) - total_duration) < 1
+    num_state = sync_fog_encoder_df.shape[0]
+    vt = np.array(sync_fog_encoder_df['linear_velocity(m/s)'], dtype=np.float64)
+    delta_yaw= np.array(sync_fog_encoder_df['delta_yaw'], dtype=np.float64)
+    tao = np.array(sync_fog_encoder_df['dt'], dtype=np.float64)
     if verbose:
-        print(f"merge_all_df: {merge_all_df.shape}")
-        print(merge_all_df.head(5))
+        print(f"sync_fog_encoder_df: {sync_fog_encoder_df.shape}")
+        print(sync_fog_encoder_df.head(5))
     # Assume initial state (x:0,y:0,theta:0)
     X0 = np.zeros((3, 1))
     lst = []
@@ -410,7 +411,7 @@ def dead_reckoning(merge_all_df, verbose=False) -> None:
     trajectory = np.hstack(lst)
     plt.figure()
     plt.scatter(trajectory[0, :], trajectory[1, :])
-    plt.title("Dead Reckoning (No NOise)")
+    plt.title("Dead Reckoning (No Noise)")
     plt.show()
 
 
@@ -426,29 +427,17 @@ if __name__ == '__main__':
     if VERBOSE:
         pd.pandas.set_option('display.max_columns', None)
 
-    # Loading data
+    # Dead Reckoning
     start_load = utils.tic()
-    # data header ['timestamp', 'delta_yaw', 'dt', 'linear_velocity(m/s)',('angles'...) ]
-    merge_all_fname = "data/sync_all_inner.csv"
-    merge_all_df = pd.read_csv(merge_all_fname)
-    print(f"merge_all_df: {merge_all_df.shape}")
-    # timestamp in milliseconds
-    timestamp = np.array(merge_all_df["timestamp"], dtype=np.float64)
-    lidar_data = np.array(merge_all_df.drop(["timestamp", "delta_yaw",
-                                             "dt", "linear_velocity(m/s)"], axis=1), dtype=np.float64)
-    total_duration = (max(merge_all_df['timestamp']) - min(merge_all_df['timestamp'])) * 1e-3
-    print(f"timestamp_lidar: {timestamp.shape}")
-    print(f"lidar_data: {lidar_data.shape}\n")
-    print(f"total_duration:{total_duration} secs")
-    utils.toc(start_load, "Finish loading data")
+    sync_fog_encoder_fname = "data/sync_fog_encoder_left.csv"
     if VERBOSE:
         start_dead_Recon = utils.tic()
         show_image()
-        dead_reckoning(merge_all_df, verbose=VERBOSE)
+        dead_reckoning(sync_fog_encoder_fname, verbose=VERBOSE)
         utils.toc(start_dead_Recon, "Finish dead_Reckoning")
+    utils.toc(start_load, "Finish program")
 
     # Init lidar_param, FOG_param, encoder_param
-
     lidar_param = get_lidar_param(verbose=False)
     FOG_param = get_FOG_param(verbose=False)
     encoder_param = get_encoder_param(verbose=False)
@@ -458,41 +447,41 @@ if __name__ == '__main__':
     print(f"lidar2vehicle_param[R]: {R.shape}\n{R}")
     print(f"lidar2vehicle_param[p]: {p.shape}\n{p}\n")
     utils.toc(start_load, "Initiate params")
-    ###################################################################################
-    '''
-    Use the first laser scan to initialize and display the map to make sure your transforms are correct:
-    1. convert the scan to cartesian coordinates
-    2. transform the scan from the lidar frame to the body frame and then to the world frame
-        At t=0, you can assume that the body frame and the world frame are perfectly aligned.
-        For t>0 you need to localize the robot in order to find the transformation between body and world.
-    3. convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
-    '''
-    # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros -- step1
-    s_L0 = polar2xyz(lidar_data, lidar_param, index=0, verbose=False)
-    print(f"s_L[0]: {s_L0.shape}")
-
-    # Transform from lidar frame to vehicle frame s_B in [x,y,z].T
-    s_V0 = transform(s_L0, R, p)  # s_L -> s_V
-    print(f"s_V[0]: {s_V0.shape}")
-
-    # Define FOG frame to be the body frame, coincide with vehicle frame
-    p_B = FOG_param["V_pos_F"]
-    s_B0 = s_V0 - p_B.reshape(3, 1)  # s_V -> s_F
-    print(f"s_B[0]: {s_V0.shape}")
-
-    # Body frame and the world frame are perfectly aligned t=0 -> s_W = I@s_B + 0 -- step2
-    s_W0 = s_B0
-    print(f"s_W[0] with z-axis: {s_W0.shape}")
-    # Remove z-axis
-    s_W0 = np.delete(s_W0, 2, axis=0)
-    print(f"s_W[0] without z-axis: {s_W0.shape}")
-    utils.toc(start_load, "Transform from laser to body s_L -> s_B -> s_W at t = 0")
-    ######################################################################################
-
-    # At t=0 assume robots locate at (0,0) and orientation 0
-    # TODO: step3: convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
-    # Assign each point to a specific cell in the map and then do bresenham2D
-    # convert nx(x,y) to row and columns
+    # ###################################################################################
+    # '''
+    # Use the first laser scan to initialize and display the map to make sure your transforms are correct:
+    # 1. convert the scan to cartesian coordinates
+    # 2. transform the scan from the lidar frame to the body frame and then to the world frame
+    #     At t=0, you can assume that the body frame and the world frame are perfectly aligned.
+    #     For t>0 you need to localize the robot in order to find the transformation between body and world.
+    # 3. convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
+    # '''
+    # # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros -- step1
+    # s_L0 = polar2xyz(lidar_data, lidar_param, index=0, verbose=False)
+    # print(f"s_L[0]: {s_L0.shape}")
+    #
+    # # Transform from lidar frame to vehicle frame s_B in [x,y,z].T
+    # s_V0 = transform(s_L0, R, p)  # s_L -> s_V
+    # print(f"s_V[0]: {s_V0.shape}")
+    #
+    # # Define FOG frame to be the body frame, coincide with vehicle frame
+    # p_B = FOG_param["V_pos_F"]
+    # s_B0 = s_V0 - p_B.reshape(3, 1)  # s_V -> s_F
+    # print(f"s_B[0]: {s_V0.shape}")
+    #
+    # # Body frame and the world frame are perfectly aligned t=0 -> s_W = I@s_B + 0 -- step2
+    # s_W0 = s_B0
+    # print(f"s_W[0] with z-axis: {s_W0.shape}")
+    # # Remove z-axis
+    # s_W0 = np.delete(s_W0, 2, axis=0)
+    # print(f"s_W[0] without z-axis: {s_W0.shape}")
+    # utils.toc(start_load, "Transform from laser to body s_L -> s_B -> s_W at t = 0")
+    # ######################################################################################
+    #
+    # # At t=0 assume robots locate at (0,0) and orientation 0
+    # # TODO: step3: convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
+    # # Assign each point to a specific cell in the map and then do bresenham2D
+    # # convert nx(x,y) to row and columns
     # # init MAP
     # MAP = dict()
     # MAP['res'] = 0.5  # meters
@@ -503,12 +492,13 @@ if __name__ == '__main__':
     # MAP['sizex'] = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1))  # cells
     # MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
     # MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
-    #
-    # xs0 = s_W0[0, :]
-    # ys0 = s_W0[1, :]
-    #
-    # show_laserXY(xs0, ys0)
-    #
-    # # convert from meters to cells
-    # xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
-    # yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
+    # #
+    # # xs0 = s_W0[0, :]
+    # # ys0 = s_W0[1, :]
+    # #
+    # # show_laserXY(xs0, ys0)
+    # #
+    # # # convert from meters to cells
+    # # xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
+    # # yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
+
