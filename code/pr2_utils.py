@@ -6,8 +6,11 @@ from mpl_toolkits.mplot3d import Axes3D
 import time
 
 
-def tic():
-    print("############ Time Start ############")
+def tic(message=None):
+    if message:
+        print(message)
+    else:
+        print("############ Time Start ############")
     return time.time()
 
 
