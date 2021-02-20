@@ -59,9 +59,9 @@ def show_map(map) -> None:
     :type: numpy array
     """
     plt.figure()
-    plt.imshow(map, cmap="hot")
+    plt.imshow(map, cmap="gray")
     plt.title("Occupancy grid map")
-    plt.grid(True)
+    # plt.grid(True)
     plt.show()
 
 
@@ -386,10 +386,10 @@ def dead_reckoning(path, verbose=False):
         print(sync_fog_encoder_df.head(5))
     # Assume initial state Xt at t=0 = (x:0,y:0,theta:0)
     X0 = np.zeros((3, 1))
-    lst = []
+    lst = [X0]
     for t in range(num_state):
-        lst.append(X0)
         X0 = differential_drive_model(X0, vt[t], delta_yaw[t], tau[t])
+        lst.append(X0)
     trajectory = np.hstack(lst)
     plt.figure()
     plt.scatter(trajectory[0, :], trajectory[1, :])
@@ -405,6 +405,7 @@ def init_map() -> dict:
     Init MAP
     :return: MAP
     """
+    # (x_min=0.0, x_max1238), (y_min=-1012, y_max=0.0)
     MAP = dict()
     MAP['res'] = 0.5  # meters
     MAP['xmin'] = -100
@@ -414,9 +415,75 @@ def init_map() -> dict:
     MAP['sizex'] = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1))  # cells
     MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
     MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
-    MAP['log_map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.float64)
+    MAP['log_odds_map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.float64)
     print(f"map resolution: {MAP['res']}")
     print(f"map size: {MAP['map'].shape}")
+    return MAP
+
+
+def update_map(MAP: dict, Xt: np.ndarray, s_F_: np.ndarray, verbose=False) -> dict:
+    """
+    Update Probabilistic Occupancy Grid Mapping
+    :param MAP:
+    :type:dict
+    :param Xt: Location of robot in world frame [x,y,theta]
+    :type: numpy array
+    :param s_F_: lidar scan in body frame in homogenous coordinate
+    :type: numpy array
+    :param verbose:
+    :return: updated MAP
+    """
+    x_W = Xt[0]
+    y_W = Xt[1]
+    theta_W = Xt[2]
+
+    # Rotation around z-axis
+    W_T_F = np.array(
+        [[np.cos(theta_W), -np.sin(theta_W), 0, x_W],
+         [np.sin(theta_W), np.cos(theta_W), 0, y_W],
+         [0, 0, 1, 0],
+         [0, 0, 0, 1]],
+        dtype=np.float64
+    )
+    # Body frame and the world frame are perfectly aligned at t=0 -> s_W = I@s_B + 0
+    # Lidar data in world frame
+    s_W_ = W_T_F @ s_F_
+
+    # Convert homogenous coord to xyz
+    # s_W_ = np.delete(s_W_, 3, axis=0)
+    if verbose:
+        print(f"Robot Location in world frame: {Xt}")
+        print(f"s_W[0] (homogenous): {s_W_.shape}")
+        # print(f"s_W[0]  with z-axis: {s_W_.shape}")
+
+    ######################################################################################
+    # Lidar data in world frame
+    ex_W = s_W_[0, :]
+    ey_W = s_W_[1, :]
+    # convert from meters to cells
+    # start point of laser beam in world frame to grid cell
+    sx = np.ceil((x_W - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
+    sy = np.ceil((y_W - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
+    # end point of laser beam in world frame to grid cell
+    ex = np.ceil((ex_W - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
+    ey = np.ceil((ey_W - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
+
+    global rays
+    rays = []
+    for i in range(ex.shape[0]):
+        # Bresenham2D() assumes sx, sy, ex, ey are already in "cell coordinates"
+        ray = utils.bresenham2D(sx=sx, sy=sy, ex=ex[i], ey=ey[i])
+        rays.append(ray)
+        xis = ray[0, :].astype(np.int16)
+        yis = ray[1, :].astype(np.int16)
+        # log-odds
+        MAP['log_odds_map'][xis[:-1], yis[:-1]] += -np.log(4)
+        MAP['log_odds_map'][xis[-1], yis[-1]] += np.log(4)
+
+    MAP['map'] = (MAP['log_odds_map'] > 0).astype(np.int8)
+
+    # show_laserXY(ex_W, ey_W)
+    # show_map(MAP['map'])
     return MAP
 
 
@@ -431,7 +498,7 @@ if __name__ == '__main__':
     pd.set_option("precision", 10)
     MAX_COL = False
     VERBOSE = False
-    DEAD_RECON = False
+    DEAD_RECON = True
     SHOW_CONFIG = False
     if MAX_COL:
         pd.pandas.set_option('display.max_columns', None)
@@ -443,7 +510,7 @@ if __name__ == '__main__':
     if DEAD_RECON:
         start_dead_Recon = utils.tic("--------DEAD RECKONING--------")
         sync_fog_encoder_fname = "data/sync_fog_encoder_left.csv"
-        dead_reckoning(sync_fog_encoder_fname, verbose=VERBOSE)
+        print(dead_reckoning(sync_fog_encoder_fname, verbose=VERBOSE))
         utils.toc(start_dead_Recon, "Finish dead_Reckoning")
 
     ###################################################################################
@@ -460,72 +527,33 @@ if __name__ == '__main__':
     utils.toc(start_init, "Initiate params")
 
     ###################################################################################
+    start_map = utils.tic("--------INIT MAP--------")
+    # Assume the map prior is uniform, occupied and free space are equally likely
+    MAP = init_map()
+    utils.toc(start_map, "Finish MAP Creation")
+
+    ###################################################################################
     start_lidar = utils.tic("--------LOAD & TRANSFORM LIDAR DATA--------")
     _, lidar_data = utils.read_data_from_csv('data/sensor_data/lidar.csv')
-    # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros -- step1
-    s_L = polar2xyz(lidar_data, lidar_param, index=0, verbose=True)
-    print(f"s_L[0]: {s_L.shape}")
-    s_F_=lidar2body(s_L_=reg2homo(s_L), V_T_L=lidar_param["V_T_L"], F_T_V=FOG_param["V_T_F"])
-    utils.toc(start_lidar, "Transform from laser to body s_L -> s_B at t = 0")
 
-    ######################################################################################
+    # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros
+    i = 0
+    s_L = polar2xyz(lidar_data, lidar_param, index=i, verbose=False)
+    # print(f"s_L[0]: {s_L.shape}")
+    s_F_=lidar2body(s_L_=reg2homo(s_L), V_T_L=lidar_param["V_T_L"], F_T_V=FOG_param["F_T_V"])
     '''
     Use the first laser scan to initialize and display the map to make sure your transforms are correct:
     1. convert the scan to cartesian coordinates
     2. transform the scan from the lidar frame to the body frame and then to the world frame
-        At t=0, you can assume that the body frame and the world frame are perfectly aligned.
-        For t>0 you need to localize the robot in order to find the transformation between body and world.
+    At t=0, you can assume that the body frame and the world frame are perfectly aligned.
+    For t>0 you need to localize the robot in order to find the transformation between body and world.
     3. convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
     '''
     # TODO: change this
-    # Location of robot in world frame
     # At t=0 assume robots locate at (0,0) and orientation 0
     Xt = [0, 0, 0]
-    x_W = Xt[0]
-    y_W = Xt[1]
-    theta_W = Xt[2]
-    print(f"Robot Location in world frame: {Xt}")
-    # Rotation around z-axis
-    W_T_F = np.array(
-        [[np.cos(theta_W), -np.sin(theta_W), 0, x_W],
-         [np.sin(theta_W), np.cos(theta_W), 0, y_W],
-         [0, 0, 1, 0],
-         [0, 0, 0, 1]],
-        dtype=np.float64
-    )
-    # Body frame and the world frame are perfectly aligned at t=0 -> s_W = I@s_B + 0 -- step2
-    # Lidar data in world frame
-    s_W_ = W_T_F @ s_F_
-    print(f"s_W[0] (homogenous): {s_W_.shape}")
-    # Convert homogenous coord to xyz
-    s_W_ = np.delete(s_W_, 3, axis=0)
-    print(f"s_W[0]  with z-axis: {s_W_.shape}")
-
-    ######################################################################################
-    start_map = utils.tic("--------INIT MAP--------")
-    # Assume the map prior is uniform, occupied and free space are equally likely
-    MAP = init_map()
-    # Lidar data in world frame
-    ex_W = s_W_[0, :]
-    ey_W = s_W_[1, :]
-    # convert from meters to cells
-    # start point of laser beam in world frame to grid cell
-    sx = np.ceil((x_W - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
-    sy = np.ceil((y_W - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
-    # end point of laser beam in world frame to grid cell
-    ex = np.ceil((ex_W - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
-    ey = np.ceil((ey_W - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
-
-    for i in range(ex.shape[0]):
-        # Bresenham2D() assumes sx, sy, ex, ey are already in "cell coordinates"
-        XY = utils.bresenham2D(sx=sx, sy=sy, ex=ex[i], ey=ey[i])
-        xis = XY[0, :].astype(np.int16)
-        yis = XY[1, :].astype(np.int16)
-        indGood = np.logical_and(np.logical_and(np.logical_and((xis > 1), (yis > 1)), (xis < MAP['sizex'])),
-                                 (yis < MAP['sizey']))
-        # log-odds
-        MAP['map'][xis[indGood], yis[indGood]] += np.log(1/4)
-
-    show_laserXY(ex_W, ey_W)
+    MAP = update_map(MAP, Xt, s_F_, verbose=True)
     show_map(MAP['map'])
-    utils.toc(start_map, "Finish MAP Creation")
+    utils.toc(start_lidar, "Update MAP")
+
+
