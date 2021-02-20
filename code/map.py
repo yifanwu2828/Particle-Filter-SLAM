@@ -347,57 +347,71 @@ def lidar2body(s_L_: np.ndarray, V_T_L: np.ndarray, F_T_V: np.ndarray, verbose=F
     return s_F0_
 
 
-def differential_drive_model(Xt, vt, delta_theta, dt) -> np.ndarray:
+def differential_drive_model(Xt, vt, delta_theta, dt, noise=False) -> np.ndarray:
     """
     Discrete-time Differential-drive Kinematic Model
     :param Xt: state   [x, y, theta].T (x_pos, y_pos, yaw_angle_rad)
     :param vt: control [vt, wt]      (linearVelocity, angularVelocity)
     :param delta_theta: yaw angle change
     :param dt: time duration
+    :param noise: add noise on vt and wt
     :return: xt+1, yt+1, theta_t+1
     """
     theta_t = Xt[2, 0]
-    dv = np.array([[vt * np.cos(theta_t)],
-                   [vt * np.sin(theta_t)],
-                   ],
-                  dtype=np.float64)
-    dx = np.vstack((dt * dv, delta_theta))
-    return Xt + dx
+    if noise:
+        # add gaussian noise
+        mu = 0
+    else:
+        eps = 0
+    dx = vt * np.cos(theta_t) #+ eps
+    dy = vt * np.sin(theta_t) #+ eps
+    dwt = delta_theta / dt #+
+    dv = np.vstack((dx, dy, dwt))
+
+    return Xt + dt*dv
 
 
-def dead_reckoning(path, verbose=False):
+def dead_reckoning(path, expert=True, verbose=False) -> np.ndarray:
     """
     Perform dead_reckoning
+    :param expert: load dead reckoning trajectory
     :param path: path to sync_fog_encoder_df
     :type: str
     :param verbose: bool
-    return (x_min, x_max), (y_min, y_max)
+    return trajectory
     """
-    sync_fog_encoder_df = pd.read_csv(path)
-    total_duration = (max(sync_fog_encoder_df['timestamp']) - min(sync_fog_encoder_df['timestamp'])) * 1e-3
-    print(f"total_duration:{total_duration} secs")
-    assert abs(sum(sync_fog_encoder_df['dt']) - total_duration) < 1
-    num_state = sync_fog_encoder_df.shape[0]
-    vt = np.array(sync_fog_encoder_df['linear_velocity(m/s)'], dtype=np.float64)
-    delta_yaw = np.array(sync_fog_encoder_df['delta_yaw'], dtype=np.float64)
-    tau = np.array(sync_fog_encoder_df['dt'], dtype=np.float64)
-    if verbose:
-        print(f"sync_fog_encoder_df: {sync_fog_encoder_df.shape}")
-        print(sync_fog_encoder_df.head(5))
-    # Assume initial state Xt at t=0 = (x:0,y:0,theta:0)
-    X0 = np.zeros((3, 1))
-    lst = [X0]
-    for t in range(num_state):
-        X0 = differential_drive_model(X0, vt[t], delta_yaw[t], tau[t])
-        lst.append(X0)
-    trajectory = np.hstack(lst)
+    if not expert:
+        sync_fog_encoder_df = pd.read_csv(path)
+        total_duration = (max(sync_fog_encoder_df['timestamp']) - min(sync_fog_encoder_df['timestamp'])) * 1e-3
+        print(f"total_duration:{total_duration} secs")
+        assert abs(sum(sync_fog_encoder_df['dt']) - total_duration) < 1
+        num_state = sync_fog_encoder_df.shape[0]
+        vt = np.array(sync_fog_encoder_df['linear_velocity(m/s)'], dtype=np.float64)
+        delta_yaw = np.array(sync_fog_encoder_df['delta_yaw'], dtype=np.float64)
+        tau = np.array(sync_fog_encoder_df['dt'], dtype=np.float64)
+        if verbose:
+            print(f"sync_fog_encoder_df: {sync_fog_encoder_df.shape}")
+            print(sync_fog_encoder_df.head(5))
+        # Assume initial state Xt at t=0 = (x:0,y:0,theta:0)
+        X0 = np.zeros((3, 1))
+        lst = [X0]
+        for t in range(num_state):
+            X0 = differential_drive_model(X0, vt[t], delta_yaw[t], tau[t], noise=False)
+            lst.append(X0)
+        trajectory = np.hstack(lst)
+        # with open('dead_reckon_traj.npy', 'wb') as f:
+        #     np.save(f, trajectory)
+    else:
+        with open('dead_reckon_traj.npy', 'rb') as f:
+            trajectory = np.load(f)
+
     plt.figure()
     plt.scatter(trajectory[0, :], trajectory[1, :])
     plt.title("Dead Reckoning (No Noise)")
     plt.show()
-    (x_min, x_max) = np.min(trajectory[0, :]), np.max(trajectory[0, :])
-    (y_min, y_max) = np.min(trajectory[1, :]), np.max(trajectory[1, :])
-    return (x_min, x_max), (y_min, y_max)
+    # (x_min, x_max) = np.min(trajectory[0, :]), np.max(trajectory[0, :])
+    # (y_min, y_max) = np.min(trajectory[1, :]), np.max(trajectory[1, :])
+    return trajectory
 
 
 def init_map() -> dict:
@@ -476,6 +490,7 @@ def update_map(MAP: dict, Xt: np.ndarray, s_F_: np.ndarray, verbose=False) -> di
         rays.append(ray)
         xis = ray[0, :].astype(np.int16)
         yis = ray[1, :].astype(np.int16)
+
         # log-odds
         MAP['log_odds_map'][xis[:-1], yis[:-1]] += -np.log(4)
         MAP['log_odds_map'][xis[-1], yis[-1]] += np.log(4)
@@ -498,7 +513,7 @@ if __name__ == '__main__':
     pd.set_option("precision", 10)
     MAX_COL = False
     VERBOSE = False
-    DEAD_RECON = True
+    DEAD_RECON = False
     SHOW_CONFIG = False
     if MAX_COL:
         pd.pandas.set_option('display.max_columns', None)
@@ -510,8 +525,8 @@ if __name__ == '__main__':
     if DEAD_RECON:
         start_dead_Recon = utils.tic("--------DEAD RECKONING--------")
         sync_fog_encoder_fname = "data/sync_fog_encoder_left.csv"
-        print(dead_reckoning(sync_fog_encoder_fname, verbose=VERBOSE))
-        utils.toc(start_dead_Recon, "Finish dead_Reckoning")
+        traj = dead_reckoning(sync_fog_encoder_fname, verbose=VERBOSE)
+        utils.toc(start_dead_Recon, "Finish Dead_Reckoning")
 
     ###################################################################################
     start_init = utils.tic("--------INIT SENSOR PARAM--------")
@@ -519,18 +534,26 @@ if __name__ == '__main__':
     lidar_param = get_lidar_param(verbose=VERBOSE)
     FOG_param = get_FOG_param(verbose=VERBOSE)
     encoder_param = get_encoder_param(verbose=VERBOSE)
+    print("lidar_param\nFOG_param\nencoder_param")
     if VERBOSE:
         # {V}T{L}
         print("lidar2vehicle_param[T]: {}\n{}".format(lidar_param["V_T_L"].shape, lidar_param["V_T_L"]))
         # {V}T{F}
         print("vehicle2FOG_param[T]: {}\n{}".format(FOG_param["F_T_V"].shape, FOG_param["F_T_V"]))
-    utils.toc(start_init, "Initiate params")
 
     ###################################################################################
     start_map = utils.tic("--------INIT MAP--------")
+    '''Mapping'''
     # Assume the map prior is uniform, occupied and free space are equally likely
     MAP = init_map()
-    utils.toc(start_map, "Finish MAP Creation")
+    with open('dead_reckon_traj.npy', 'rb') as f:
+        traj = np.load(f)
+    if not DEAD_RECON:
+        plt.figure()
+        plt.scatter(traj[0, :], traj[1, :])
+        plt.title("Dead Reckoning (No Noise)")
+        plt.show()
+    utils.toc(start_map, "Finish Loading Dead_Reckoning Trajectory")
 
     ###################################################################################
     start_lidar = utils.tic("--------LOAD & TRANSFORM LIDAR DATA--------")
@@ -540,7 +563,7 @@ if __name__ == '__main__':
     i = 0
     s_L = polar2xyz(lidar_data, lidar_param, index=i, verbose=False)
     # print(f"s_L[0]: {s_L.shape}")
-    s_F_=lidar2body(s_L_=reg2homo(s_L), V_T_L=lidar_param["V_T_L"], F_T_V=FOG_param["F_T_V"])
+    s_F_ = lidar2body(s_L_=reg2homo(s_L), V_T_L=lidar_param["V_T_L"], F_T_V=FOG_param["F_T_V"])
     '''
     Use the first laser scan to initialize and display the map to make sure your transforms are correct:
     1. convert the scan to cartesian coordinates
@@ -549,11 +572,12 @@ if __name__ == '__main__':
     For t>0 you need to localize the robot in order to find the transformation between body and world.
     3. convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
     '''
-    # TODO: change this
     # At t=0 assume robots locate at (0,0) and orientation 0
     Xt = [0, 0, 0]
     MAP = update_map(MAP, Xt, s_F_, verbose=True)
     show_map(MAP['map'])
-    utils.toc(start_lidar, "Update MAP")
+    utils.toc(start_map, "Finish MAP Creation with First Lidar Scan")
+    ###################################################################################
+    '''Prediction'''
 
-
+    # utils.toc(start_lidar, "Update MAP log-odds")
