@@ -23,7 +23,7 @@ def show_image() -> None:
     plt.show()
 
 
-def show_lidar(angles: np.ndarray, ranges: np.ndarray) -> None:
+def show_lidar(angles: np.ndarray, ranges: np.ndarray, title="Lidar Scan Data") -> None:
     """
     Show lidar in polar coordinates
     """
@@ -34,7 +34,7 @@ def show_lidar(angles: np.ndarray, ranges: np.ndarray) -> None:
     ax.set_rticks([0.5, 1, 1.5, 2])  # fewer radial ticks
     ax.set_rlabel_position(-22.5)  # get radial labels away from plotted line
     ax.grid(True)
-    ax.set_title("Lidar scan data", va='bottom')
+    ax.set_title(title, va='bottom')
     plt.show()
 
 
@@ -118,15 +118,15 @@ def polar2xyz(lidar_data: np.ndarray, lidar_param: dict, index=0, verbose=False)
     min_range = lidar_param["min_range"]
     # angles = np.deg2rad(np.linspace(-5, 185, 286))
     angles = lidar_param["angles"]
-    ranges = lidar_data[0, :]
+    ranges = lidar_data[index, :]
     if verbose:
-        show_lidar(angles, ranges)
+        show_lidar(angles, ranges, title="Raw Lidar Scan Data")
     # Filter out noisy data (r<2 and r>80)
     indValid = np.logical_and((ranges <= max_range), (ranges >= min_range))
     ranges = ranges[indValid]
     angles = angles[indValid]
     if verbose:
-        show_lidar(angles, ranges)
+        show_lidar(angles, ranges, title="Valid Lidar Scan Data")
     # Convert from polar to cartesian coordinates
     x, y = polar2cartesian(ranges, angles)
     # sanity check car2pol conversion
@@ -181,6 +181,7 @@ def get_lidar_param(verbose=False) -> dict:
     lidar_param["V_Rot_L"] = V_R_L
     lidar_param["V_pos_L"] = V_p_L
     lidar_param["V_T_L"] = get_T(V_R_L, V_p_L)
+    lidar_param["L_T_V"] = np.linalg.inv(lidar_param["V_T_L"])
     lidar_param["FOV"] = 190
     lidar_param["start_angle"] = -5
     lidar_param["end_angle"] = 185
@@ -226,6 +227,7 @@ def get_FOG_param(verbose=False) -> dict:
     FOG_param["V_Rot_F"] = V_R_F
     FOG_param["V_pos_F"] = V_p_F
     FOG_param["V_T_F"] = get_T(V_R_F, V_p_F)
+    FOG_param["F_T_V"] = np.linalg.inv(FOG_param["V_T_F"])
     info = "* FOG measurements are stored as [timestamp, delta roll, delta pitch, delta yaw] in " \
            "radians. "
     FOG_param["info"] = info
@@ -355,17 +357,17 @@ def dead_reckoning(path, verbose=False):
     assert abs(sum(sync_fog_encoder_df['dt']) - total_duration) < 1
     num_state = sync_fog_encoder_df.shape[0]
     vt = np.array(sync_fog_encoder_df['linear_velocity(m/s)'], dtype=np.float64)
-    delta_yaw= np.array(sync_fog_encoder_df['delta_yaw'], dtype=np.float64)
-    tao = np.array(sync_fog_encoder_df['dt'], dtype=np.float64)
+    delta_yaw = np.array(sync_fog_encoder_df['delta_yaw'], dtype=np.float64)
+    tau = np.array(sync_fog_encoder_df['dt'], dtype=np.float64)
     if verbose:
         print(f"sync_fog_encoder_df: {sync_fog_encoder_df.shape}")
         print(sync_fog_encoder_df.head(5))
     # Assume initial state Xt at t=0 = (x:0,y:0,theta:0)
     X0 = np.zeros((3, 1))
     lst = []
-    for i in range(num_state):
+    for t in range(num_state):
         lst.append(X0)
-        X0 = differential_drive_model(X0, vt[i], delta_yaw[i], tao[i])
+        X0 = differential_drive_model(X0, vt[t], delta_yaw[t], tau[t])
     trajectory = np.hstack(lst)
     plt.figure()
     plt.scatter(trajectory[0, :], trajectory[1, :])
@@ -376,15 +378,35 @@ def dead_reckoning(path, verbose=False):
     return (x_min, x_max), (y_min, y_max)
 
 
+def init_map() -> dict:
+    """
+    Init MAP
+    :return: MAP
+    """
+    MAP = dict()
+    MAP['res'] = 0.5  # meters
+    MAP['xmin'] = -100
+    MAP['xmax'] = 1350
+    MAP['ymin'] = -1350
+    MAP['ymax'] = 100
+    MAP['sizex'] = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1))  # cells
+    MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
+    MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
+    print(f"map resolution: {MAP['res']}")
+    print(f"map size: {MAP['map'].shape}")
+    return MAP
+
+
 def main():
     pass
 
 
 if __name__ == '__main__':
+    ###################################################################################
     # Running Config
     np.seterr(all='raise')
     pd.set_option("precision", 10)
-    MAX_COL =False
+    MAX_COL = False
     VERBOSE = False
     DEAD_RECON = False
     SHOW_CONFIG = False
@@ -392,6 +414,8 @@ if __name__ == '__main__':
         pd.pandas.set_option('display.max_columns', None)
     if SHOW_CONFIG:
         show_image()
+
+    ###################################################################################
     # Dead Reckoning
     if DEAD_RECON:
         start_dead_Recon = utils.tic("--------DEAD RECKONING--------")
@@ -405,15 +429,11 @@ if __name__ == '__main__':
     lidar_param = get_lidar_param(verbose=VERBOSE)
     FOG_param = get_FOG_param(verbose=VERBOSE)
     encoder_param = get_encoder_param(verbose=VERBOSE)
-
-    R = lidar_param["V_Rot_L"]
-    p = lidar_param["V_pos_L"]
-    print(f"lidar2vehicle_param[R]: {R.shape}\n{R}")
-    print(f"lidar2vehicle_param[p]: {p.shape}\n{p}\n")
-    V_R_F = FOG_param["V_Rot_F"]
-    V_p_F = FOG_param["V_pos_F"]
-    print(f"FOG2vehicle_param[R]: {V_R_F.shape}\n{V_R_F}")
-    print(f"FOG2vehicle_param[p]: {V_p_F.shape}\n{V_p_F}\n")
+    if VERBOSE:
+        # {V}T{L}
+        print("lidar2vehicle_param[T]: {}\n{}".format(lidar_param["V_T_L"].shape, lidar_param["V_T_L"]))
+        # {V}T{F}
+        print("vehicle2FOG_param[T]: {}\n{}".format(FOG_param["F_T_V"].shape, FOG_param["F_T_V"]))
     utils.toc(start_init, "Initiate params")
 
     ###################################################################################
@@ -429,71 +449,67 @@ if __name__ == '__main__':
     _, lidar_data = utils.read_data_from_csv('data/sensor_data/lidar.csv')
 
     # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros -- step1
-    s_L0 = polar2xyz(lidar_data, lidar_param, index=0, verbose=False)
+    s_L0 = polar2xyz(lidar_data, lidar_param, index=0, verbose=True)
     print(f"s_L[0]: {s_L0.shape}")
 
     # Transform from lidar frame to vehicle frame s_L -> s_V
-    V_T_L = get_T(R, p)
+    V_T_L = lidar_param["V_T_L"]
     s_V0_ = V_T_L @ reg2homo(s_L0)
     print(f"s_V[0](homogenous): {s_V0_.shape}")
 
     # Define FOG frame to be the body frame, coincide with vehicle frame
-    V_T_F = get_T(V_R_F, V_p_F)
-    F_T_V = np.linalg.inv(V_T_F)
-    s_F0_ = F_T_V @ s_V0_   # s_V -> s_F
+    F_T_V = FOG_param["V_T_F"]
+    s_F0_ = F_T_V @ s_V0_  # s_V -> s_F
     print(f"s_F[0](homogenous): {s_F0_.shape}")
+    utils.toc(start_lidar, "Transform from laser to body s_L -> s_B at t = 0")
+
+    ######################################################################################
+    # TODO: change this
+    # Location of robot in world frame
+    # At t=0 assume robots locate at (0,0) and orientation 0
+    Xt = [0, 0, 0]
+    x_W = Xt[0]
+    y_W = Xt[1]
+    theta_W = Xt[2]
+    print(f"Robot Location in world frame: {Xt}")
+    # Rotation around z-axis
+    W_T_F = np.array(
+        [[np.cos(theta_W), -np.sin(theta_W), 0, x_W],
+         [np.sin(theta_W), np.cos(theta_W), 0, y_W],
+         [0, 0, 1, 0],
+         [0, 0, 0, 1]],
+        dtype=np.float64
+    )
 
     # Body frame and the world frame are perfectly aligned t=0 -> s_W = I@s_B + 0 -- step2
-    s_W0_ = s_F0_
+    # Lidar data in world frame
+    s_W0_ = W_T_F @ s_F0_
     print(f"s_W[0] (homogenous): {s_W0_.shape}")
-
     # Convert homogenous coord to xyz
     s_W0 = np.delete(s_W0_, 3, axis=0)
     print(f"s_W[0]  with z-axis: {s_W0.shape}")
-    utils.toc(start_lidar, "Transform from laser to body s_L -> s_B -> s_W at t = 0")
 
     ######################################################################################
-    # At t=0 assume robots locate at (0,0) and orientation 0
     # TODO: step3: convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
-    # Assign each point to a specific cell in the map and then do bresenham2D
-    # convert nx(x,y) to row and columns
     start_map = utils.tic("--------INIT MAP--------")
-    x_min, x_max = 0.0 - lidar_param["max_range"], 1238.0 + lidar_param["max_range"]
-    y_min, y_max = -1012.0 - lidar_param["max_range"], 0.0 + lidar_param["max_range"]
-    print(f"x_min: {x_min},\tx_max: {x_max}")
-    print(f"y_min: {y_min}, y_max: {y_max}")
-    x_half = int((x_max - x_min) / 2)
-    y_half = int((y_max - y_min) / 2)
-    print(f"x_interval: [{-x_half}, {x_half}]")
-    print(f"y_interval: [{-y_half}, {y_half}]")
-
-    # init MAP
-    MAP = dict()
-    MAP['res'] = 0.5  # meters
-    MAP['xmin'] = -x_half     # -699
-    MAP['xmax'] = x_half      # 699
-    MAP['ymin'] = -y_half     # -586
-    MAP['ymax'] = y_half      # 586
-    MAP['sizex'] = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1))  # cells
-    MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
-    MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
-    print(f"map resolution: {MAP['res']}")
-    print(f"map size: {MAP['map'].shape}")
+    MAP = init_map()
 
     # Lidar data in world frame
-    xs0 = s_W0[0, :]
-    ys0 = s_W0[1, :]
-    show_laserXY(xs0, ys0)
+    ex_W = s_W0[0, :]
+    ey_W = s_W0[1, :]
 
     # convert from meters to cells
-    xis = np.ceil((xs0 - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
-    yis = np.ceil((ys0 - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
+    # start point of laser beam in world frame to grid cell
+    sx = np.ceil((x_W - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
+    sy = np.ceil((y_W - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
+    # end point of laser beam in world frame to grid cell
+    ex = np.ceil((ex_W - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
+    ey = np.ceil((ey_W - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
 
-    # center (1398.5, 1172.5)
-    for i in range(xis.shape[0]):
-        Y = utils.bresenham2D(sx=0, sy=0, ex=xis[i], ey=yis[i])
-        for j in range(Y.shape[1]):
-            MAP['map'][Y[0, j], Y[1, j]] = -1
+    for i in range(ex.shape[0]):
+        # Bresenham2D() assumes sx, sy, ex, ey are already in "cell coordinates"
+        XY = utils.bresenham2D(sx=sx, sy=sy, ex=ex[i], ey=ey[i])
 
+    show_laserXY(ex_W, ey_W)
     show_map(MAP['map'])
-    utils.toc(start_map, "Finish MAP")
+    utils.toc(start_map, "Finish MAP Creation")
