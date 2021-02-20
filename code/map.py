@@ -325,7 +325,7 @@ def reg2homo(X: np.ndarray) -> np.ndarray:
     return X_
 
 
-def lidar2body(s_L_: np.ndarray, V_T_L: np.ndarray, F_T_V: np.ndarray, verbose=False):
+def lidar2body(s_L_: np.ndarray, V_T_L: np.ndarray, F_T_V: np.ndarray, verbose=False)-> np.ndarray:
     """
     Convert point clouds from Lidar frame to Body frame(FOG frame)
     :param s_L_:  point clouds in homogenous coordinate
@@ -414,6 +414,7 @@ def init_map() -> dict:
     MAP['sizex'] = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1))  # cells
     MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
     MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
+    MAP['log_map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.float64)
     print(f"map resolution: {MAP['res']}")
     print(f"map size: {MAP['map'].shape}")
     return MAP
@@ -459,14 +460,6 @@ if __name__ == '__main__':
     utils.toc(start_init, "Initiate params")
 
     ###################################################################################
-    '''
-    Use the first laser scan to initialize and display the map to make sure your transforms are correct:
-    1. convert the scan to cartesian coordinates
-    2. transform the scan from the lidar frame to the body frame and then to the world frame
-        At t=0, you can assume that the body frame and the world frame are perfectly aligned.
-        For t>0 you need to localize the robot in order to find the transformation between body and world.
-    3. convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
-    '''
     start_lidar = utils.tic("--------LOAD & TRANSFORM LIDAR DATA--------")
     _, lidar_data = utils.read_data_from_csv('data/sensor_data/lidar.csv')
     # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros -- step1
@@ -476,6 +469,14 @@ if __name__ == '__main__':
     utils.toc(start_lidar, "Transform from laser to body s_L -> s_B at t = 0")
 
     ######################################################################################
+    '''
+    Use the first laser scan to initialize and display the map to make sure your transforms are correct:
+    1. convert the scan to cartesian coordinates
+    2. transform the scan from the lidar frame to the body frame and then to the world frame
+        At t=0, you can assume that the body frame and the world frame are perfectly aligned.
+        For t>0 you need to localize the robot in order to find the transformation between body and world.
+    3. convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
+    '''
     # TODO: change this
     # Location of robot in world frame
     # At t=0 assume robots locate at (0,0) and orientation 0
@@ -523,7 +524,7 @@ if __name__ == '__main__':
         indGood = np.logical_and(np.logical_and(np.logical_and((xis > 1), (yis > 1)), (xis < MAP['sizex'])),
                                  (yis < MAP['sizey']))
         # log-odds
-        # MAP['map'][xis[indGood], yis[indGood]] += np.log(1 / 4)
+        MAP['map'][xis[indGood], yis[indGood]] += np.log(1/4)
 
     show_laserXY(ex_W, ey_W)
     show_map(MAP['map'])
