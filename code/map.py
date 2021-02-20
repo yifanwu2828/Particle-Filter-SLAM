@@ -325,6 +325,28 @@ def reg2homo(X: np.ndarray) -> np.ndarray:
     return X_
 
 
+def lidar2body(s_L_: np.ndarray, V_T_L: np.ndarray, F_T_V: np.ndarray, verbose=False):
+    """
+    Convert point clouds from Lidar frame to Body frame(FOG frame)
+    :param s_L_:  point clouds in homogenous coordinate
+    :param V_T_L: pose from lidar to vehicle
+    :param F_T_V: pose from vehicle to FOG
+    :param verbose:
+    :return: s_B_
+    """
+    assert isinstance(s_L_, np.ndarray) and s_L_.shape[0] ==4
+    assert isinstance(V_T_L, np.ndarray) and V_T_L.shape[0] ==4 and V_T_L.shape[1] ==4
+    assert isinstance(F_T_V, np.ndarray) and F_T_V.shape[0] ==4 and F_T_V.shape[1] ==4
+    # Transform from lidar frame to vehicle frame s_L -> s_V
+    s_V0_ = V_T_L @ s_L_
+    # Define FOG frame to be the body frame, coincide with vehicle frame
+    s_F0_ = F_T_V @ s_V0_  # s_V -> s_F
+    if verbose:
+        print(f"s_V[0](homogenous): {s_V0_.shape}")
+        print(f"s_F[0](homogenous): {s_F0_.shape}")
+    return s_F0_
+
+
 def differential_drive_model(Xt, vt, delta_theta, dt) -> np.ndarray:
     """
     Discrete-time Differential-drive Kinematic Model
@@ -447,20 +469,10 @@ if __name__ == '__main__':
     '''
     start_lidar = utils.tic("--------LOAD & TRANSFORM LIDAR DATA--------")
     _, lidar_data = utils.read_data_from_csv('data/sensor_data/lidar.csv')
-
     # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros -- step1
-    s_L0 = polar2xyz(lidar_data, lidar_param, index=0, verbose=True)
-    print(f"s_L[0]: {s_L0.shape}")
-
-    # Transform from lidar frame to vehicle frame s_L -> s_V
-    V_T_L = lidar_param["V_T_L"]
-    s_V0_ = V_T_L @ reg2homo(s_L0)
-    print(f"s_V[0](homogenous): {s_V0_.shape}")
-
-    # Define FOG frame to be the body frame, coincide with vehicle frame
-    F_T_V = FOG_param["V_T_F"]
-    s_F0_ = F_T_V @ s_V0_  # s_V -> s_F
-    print(f"s_F[0](homogenous): {s_F0_.shape}")
+    s_L = polar2xyz(lidar_data, lidar_param, index=0, verbose=True)
+    print(f"s_L[0]: {s_L.shape}")
+    s_F_=lidar2body(s_L_=reg2homo(s_L), V_T_L=lidar_param["V_T_L"], F_T_V=FOG_param["V_T_F"])
     utils.toc(start_lidar, "Transform from laser to body s_L -> s_B at t = 0")
 
     ######################################################################################
@@ -480,24 +492,21 @@ if __name__ == '__main__':
          [0, 0, 0, 1]],
         dtype=np.float64
     )
-
-    # Body frame and the world frame are perfectly aligned t=0 -> s_W = I@s_B + 0 -- step2
+    # Body frame and the world frame are perfectly aligned at t=0 -> s_W = I@s_B + 0 -- step2
     # Lidar data in world frame
-    s_W0_ = W_T_F @ s_F0_
-    print(f"s_W[0] (homogenous): {s_W0_.shape}")
+    s_W_ = W_T_F @ s_F_
+    print(f"s_W[0] (homogenous): {s_W_.shape}")
     # Convert homogenous coord to xyz
-    s_W0 = np.delete(s_W0_, 3, axis=0)
-    print(f"s_W[0]  with z-axis: {s_W0.shape}")
+    s_W_ = np.delete(s_W_, 3, axis=0)
+    print(f"s_W[0]  with z-axis: {s_W_.shape}")
 
     ######################################################################################
-    # TODO: step3: convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
     start_map = utils.tic("--------INIT MAP--------")
+    # Assume the map prior is uniform, occupied and free space are equally likely
     MAP = init_map()
-
     # Lidar data in world frame
-    ex_W = s_W0[0, :]
-    ey_W = s_W0[1, :]
-
+    ex_W = s_W_[0, :]
+    ey_W = s_W_[1, :]
     # convert from meters to cells
     # start point of laser beam in world frame to grid cell
     sx = np.ceil((x_W - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
@@ -509,6 +518,12 @@ if __name__ == '__main__':
     for i in range(ex.shape[0]):
         # Bresenham2D() assumes sx, sy, ex, ey are already in "cell coordinates"
         XY = utils.bresenham2D(sx=sx, sy=sy, ex=ex[i], ey=ey[i])
+        xis = XY[0, :].astype(np.int16)
+        yis = XY[1, :].astype(np.int16)
+        indGood = np.logical_and(np.logical_and(np.logical_and((xis > 1), (yis > 1)), (xis < MAP['sizex'])),
+                                 (yis < MAP['sizey']))
+        # log-odds
+        # MAP['map'][xis[indGood], yis[indGood]] += np.log(1 / 4)
 
     show_laserXY(ex_W, ey_W)
     show_map(MAP['map'])
