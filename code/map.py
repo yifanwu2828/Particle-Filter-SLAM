@@ -3,6 +3,9 @@ from collections import namedtuple
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+import pickle
+from tqdm import tqdm
+
 
 import pr2_utils as utils
 
@@ -59,7 +62,7 @@ def show_map(map) -> None:
     :type: numpy array
     """
     plt.figure()
-    plt.imshow(map, cmap="gray")
+    plt.imshow(map, cmap="hot")
     plt.title("Occupancy grid map")
     # plt.grid(True)
     plt.show()
@@ -93,13 +96,13 @@ def polar2cartesian(r, theta):
     return a.real, a.imag
 
 
-def polar2xyz(lidar_data: np.ndarray, lidar_param: dict, index=0, verbose=False) -> np.ndarray:
+def polar2xyz(ranges: np.ndarray, lidar_param: dict, verbose=False) -> np.ndarray:
     """
     Convert from polar coordinates to cartesian coordinate with z axis fill with zeros
     Remove scan points that are too close or too far,
     Only consider points between [min_range=2, max_range=80]
     * Measurements between 2m-75m are recommended to be included as valid data.
-    :param: lidar_data
+    :param: lidar_data (one slice of observations)
     :type:  numpy.array
     :param: index
     :type: int
@@ -111,14 +114,12 @@ def polar2xyz(lidar_data: np.ndarray, lidar_param: dict, index=0, verbose=False)
         where  n = 286, -> FOV: 190 (degree)/Angular resolution: 0.666 (degree) = 285.28
         if all cloud points are valid
     """
-    assert isinstance(lidar_data, np.ndarray)
-    assert isinstance(index, int)
+    assert isinstance(ranges, np.ndarray)
     assert isinstance(lidar_param, dict)
     max_range = lidar_param["max_range"]
     min_range = lidar_param["min_range"]
     # angles = np.deg2rad(np.linspace(-5, 185, 286))
     angles = lidar_param["angles"]
-    ranges = lidar_data[index, :]
     if verbose:
         show_lidar(angles, ranges, title="Raw Lidar Scan Data")
     # Filter out noisy data (r<2 and r>80)
@@ -325,7 +326,7 @@ def reg2homo(X: np.ndarray) -> np.ndarray:
     return X_
 
 
-def lidar2body(s_L_: np.ndarray, V_T_L: np.ndarray, F_T_V: np.ndarray, verbose=False)-> np.ndarray:
+def lidar2body(s_L_: np.ndarray, V_T_L: np.ndarray, F_T_V: np.ndarray, verbose=False) -> np.ndarray:
     """
     Convert point clouds from Lidar frame to Body frame(FOG frame)
     :param s_L_:  point clouds in homogenous coordinate
@@ -334,9 +335,9 @@ def lidar2body(s_L_: np.ndarray, V_T_L: np.ndarray, F_T_V: np.ndarray, verbose=F
     :param verbose:
     :return: s_B_
     """
-    assert isinstance(s_L_, np.ndarray) and s_L_.shape[0] ==4
-    assert isinstance(V_T_L, np.ndarray) and V_T_L.shape[0] ==4 and V_T_L.shape[1] ==4
-    assert isinstance(F_T_V, np.ndarray) and F_T_V.shape[0] ==4 and F_T_V.shape[1] ==4
+    assert isinstance(s_L_, np.ndarray) and s_L_.shape[0] == 4
+    assert isinstance(V_T_L, np.ndarray) and V_T_L.shape[0] == 4 and V_T_L.shape[1] == 4
+    assert isinstance(F_T_V, np.ndarray) and F_T_V.shape[0] == 4 and F_T_V.shape[1] == 4
     # Transform from lidar frame to vehicle frame s_L -> s_V
     s_V0_ = V_T_L @ s_L_
     # Define FOG frame to be the body frame, coincide with vehicle frame
@@ -347,31 +348,25 @@ def lidar2body(s_L_: np.ndarray, V_T_L: np.ndarray, F_T_V: np.ndarray, verbose=F
     return s_F0_
 
 
-def differential_drive_model(Xt, vt, delta_theta, dt, noise=False) -> np.ndarray:
+def differential_drive_model(Xt, vt, delta_theta, dt) -> np.ndarray:
     """
     Discrete-time Differential-drive Kinematic Model
     :param Xt: state   [x, y, theta].T (x_pos, y_pos, yaw_angle_rad)
     :param vt: control [vt, wt]      (linearVelocity, angularVelocity)
     :param delta_theta: yaw angle change
     :param dt: time duration
-    :param noise: add noise on vt and wt
     :return: xt+1, yt+1, theta_t+1
     """
     theta_t = Xt[2, 0]
-    if noise:
-        # add gaussian noise
-        mu = 0
-    else:
-        eps = 0
-    dx = vt * np.cos(theta_t) #+ eps
-    dy = vt * np.sin(theta_t) #+ eps
-    dwt = delta_theta / dt #+
-    dv = np.vstack((dx, dy, dwt))
-
-    return Xt + dt*dv
+    dv = np.array([[vt * np.cos(theta_t)],
+                   [vt * np.sin(theta_t)],
+                   ],
+                  dtype=np.float64)
+    dx = np.vstack((dt * dv, delta_theta))
+    return Xt + dx
 
 
-def dead_reckoning(path, expert=True, verbose=False) -> np.ndarray:
+def dead_reckoning(path, expert=False, verbose=False) -> np.ndarray:
     """
     Perform dead_reckoning
     :param expert: load dead reckoning trajectory
@@ -396,7 +391,7 @@ def dead_reckoning(path, expert=True, verbose=False) -> np.ndarray:
         X0 = np.zeros((3, 1))
         lst = [X0]
         for t in range(num_state):
-            X0 = differential_drive_model(X0, vt[t], delta_yaw[t], tau[t], noise=False)
+            X0 = differential_drive_model(X0, vt[t], delta_yaw[t], tau[t])
             lst.append(X0)
         trajectory = np.hstack(lst)
         # with open('dead_reckon_traj.npy', 'wb') as f:
@@ -409,8 +404,6 @@ def dead_reckoning(path, expert=True, verbose=False) -> np.ndarray:
     plt.scatter(trajectory[0, :], trajectory[1, :])
     plt.title("Dead Reckoning (No Noise)")
     plt.show()
-    # (x_min, x_max) = np.min(trajectory[0, :]), np.max(trajectory[0, :])
-    # (y_min, y_max) = np.min(trajectory[1, :]), np.max(trajectory[1, :])
     return trajectory
 
 
@@ -421,7 +414,7 @@ def init_map() -> dict:
     """
     # (x_min=0.0, x_max1238), (y_min=-1012, y_max=0.0)
     MAP = dict()
-    MAP['res'] = 0.5  # meters
+    MAP['res'] = 1  # meters
     MAP['xmin'] = -100
     MAP['xmax'] = 1350
     MAP['ymin'] = -1350
@@ -430,6 +423,7 @@ def init_map() -> dict:
     MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
     MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
     MAP['log_odds_map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.float64)
+
     print(f"map resolution: {MAP['res']}")
     print(f"map size: {MAP['map'].shape}")
     return MAP
@@ -452,6 +446,7 @@ def update_map(MAP: dict, Xt: np.ndarray, s_F_: np.ndarray, verbose=False) -> di
     theta_W = Xt[2]
 
     # Rotation around z-axis
+    global s_W_
     W_T_F = np.array(
         [[np.cos(theta_W), -np.sin(theta_W), 0, x_W],
          [np.sin(theta_W), np.cos(theta_W), 0, y_W],
@@ -465,22 +460,25 @@ def update_map(MAP: dict, Xt: np.ndarray, s_F_: np.ndarray, verbose=False) -> di
 
     # Convert homogenous coord to xyz
     # s_W_ = np.delete(s_W_, 3, axis=0)
-    if verbose:
-        print(f"Robot Location in world frame: {Xt}")
-        print(f"s_W[0] (homogenous): {s_W_.shape}")
-        # print(f"s_W[0]  with z-axis: {s_W_.shape}")
 
     ######################################################################################
     # Lidar data in world frame
     ex_W = s_W_[0, :]
     ey_W = s_W_[1, :]
+
     # convert from meters to cells
     # start point of laser beam in world frame to grid cell
-    sx = np.ceil((x_W - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
-    sy = np.ceil((y_W - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
+    sx = int(np.ceil((x_W - MAP['xmin']) / MAP['res']).astype(np.int16) - 1)
+    sy = int(np.ceil((y_W - MAP['ymin']) / MAP['res']).astype(np.int16) - 1)
     # end point of laser beam in world frame to grid cell
     ex = np.ceil((ex_W - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
     ey = np.ceil((ey_W - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
+
+    if verbose:
+        print(f"Robot Location in world frame: {Xt}")
+        print(f"s_W[0] (homogenous): {s_W_.shape}")
+        # print(f"s_W[0]  with z-axis: {s_W_.shape}")
+        print(f"({sx},{sy})")
 
     global rays
     rays = []
@@ -492,14 +490,30 @@ def update_map(MAP: dict, Xt: np.ndarray, s_F_: np.ndarray, verbose=False) -> di
         yis = ray[1, :].astype(np.int16)
 
         # log-odds
-        MAP['log_odds_map'][xis[:-1], yis[:-1]] += -np.log(4)
+        MAP['log_odds_map'][xis[:-1], yis[:-1]] -= np.log(4)
         MAP['log_odds_map'][xis[-1], yis[-1]] += np.log(4)
 
-    MAP['map'] = (MAP['log_odds_map'] > 0).astype(np.int8)
-
-    # show_laserXY(ex_W, ey_W)
-    # show_map(MAP['map'])
     return MAP
+
+
+def prediction_step(Xt, vt, delta_theta, dt, wt):
+    """
+
+    :param Xt: pose and yaw angle in rad
+    :param vt: linear velocity
+    :param delta_theta: yaw angel diff
+    :param dt: time diff
+    :param wt: angular velocity
+    :return:
+    """
+    x= Xt[0, 0]
+    y= Xt[1, 0]
+    theta_t = Xt[2, 0]
+    dvx = vt * np.cos(theta_t)
+    dvy = vt * np.sin(theta_t)
+    wt = delta_theta / dt
+    dx = dt * np.vstack((dvx, dvy, wt))
+    return Xt + dx
 
 
 def main():
@@ -525,7 +539,7 @@ if __name__ == '__main__':
     if DEAD_RECON:
         start_dead_Recon = utils.tic("--------DEAD RECKONING--------")
         sync_fog_encoder_fname = "data/sync_fog_encoder_left.csv"
-        traj = dead_reckoning(sync_fog_encoder_fname, verbose=VERBOSE)
+        traj = dead_reckoning(sync_fog_encoder_fname, expert=False, verbose=VERBOSE)
         utils.toc(start_dead_Recon, "Finish Dead_Reckoning")
 
     ###################################################################################
@@ -556,28 +570,47 @@ if __name__ == '__main__':
     utils.toc(start_map, "Finish Loading Dead_Reckoning Trajectory")
 
     ###################################################################################
-    start_lidar = utils.tic("--------LOAD & TRANSFORM LIDAR DATA--------")
-    _, lidar_data = utils.read_data_from_csv('data/sensor_data/lidar.csv')
+    # _, lidar_data = utils.read_data_from_csv('data/sensor_data/lidar.csv')
+    start_lidar = utils.tic("--------LOAD & TRANSFORM DATA--------")
+    # sync_merge_all_inner = pd.read_csv("data/sync_merge_all_inner.csv")
+    sync_merge_all= pd.read_csv("data/sync_merge_all_left.csv")
+    # print(f"sync_merge_all_inner: {sync_merge_all_inner.shape}")
+    # print(sync_merge_all_inner.head())
+    print(f"sync_merge_all: {sync_merge_all.shape}")
+    # print(sync_merge_all_left.head())
+    utils.toc(start_map, "Finish loading Data")
 
-    # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros
-    i = 0
-    s_L = polar2xyz(lidar_data, lidar_param, index=i, verbose=False)
-    # print(f"s_L[0]: {s_L.shape}")
-    s_F_ = lidar2body(s_L_=reg2homo(s_L), V_T_L=lidar_param["V_T_L"], F_T_V=FOG_param["F_T_V"])
-    '''
-    Use the first laser scan to initialize and display the map to make sure your transforms are correct:
-    1. convert the scan to cartesian coordinates
-    2. transform the scan from the lidar frame to the body frame and then to the world frame
-    At t=0, you can assume that the body frame and the world frame are perfectly aligned.
-    For t>0 you need to localize the robot in order to find the transformation between body and world.
-    3. convert the scan to cells (via bresenham2D or cv2.drawContours) and update the map log-odds
-    '''
+    num_state = sync_merge_all.shape[0]
+    lidar_data = sync_merge_all.drop(['timestamp', 'delta_yaw', 'dt', 'wt', 'linear_velocity(m/s)'], axis=1).values
+    vt = sync_merge_all['linear_velocity(m/s)'].values
+    delta_yaw = sync_merge_all['delta_yaw'].values
+    tau = sync_merge_all['dt'].values
+    wt = sync_merge_all['wt'].values
+
     # At t=0 assume robots locate at (0,0) and orientation 0
-    Xt = [0, 0, 0]
-    MAP = update_map(MAP, Xt, s_F_, verbose=True)
+    Xt = np.zeros((3, 1))
+    lst = [Xt]
+    for i in tqdm(range(num_state)): # num_state
+        # Lidar data is not NaN
+        ranges = lidar_data[i, :]
+        if not np.isnan(np.sum(ranges)):
+            # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros
+            s_L = polar2xyz(ranges, lidar_param, verbose=False)
+            # print(f"s_L[0]: {s_L.shape}")
+            s_F_ = lidar2body(s_L_=reg2homo(s_L), V_T_L=lidar_param["V_T_L"], F_T_V=FOG_param["F_T_V"])
+            MAP = update_map(MAP, Xt, s_F_, verbose=False)
+        if i % 100000 ==0 and i !=0:
+            show_map(np.where(MAP['log_odds_map'] > 0, 1, 0).astype(np.int8))
+        # TODO: prediction Xt add noise
+        Xt = prediction_step(Xt, vt[i], delta_yaw[i], tau[i], wt[i])
+        lst.append(Xt)
+    ##################################################################################
+    MAP['map'] = np.where(MAP['log_odds_map'] > 0, 1, 0).astype(np.int8)
     show_map(MAP['map'])
-    utils.toc(start_map, "Finish MAP Creation with First Lidar Scan")
-    ###################################################################################
+    # Save result
+    with open('map_test.pkl', 'wb') as f:
+        pickle.dump(MAP, f)
+    utils.toc(start_map, "Finish MAP Creation & Update MAP log-odds")
+    ##################################################################################
     '''Prediction'''
 
-    # utils.toc(start_lidar, "Update MAP log-odds")
