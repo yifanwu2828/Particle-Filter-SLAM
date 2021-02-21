@@ -5,16 +5,9 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import pickle
 from tqdm import tqdm
-
+from numba import jit
 
 import pr2_utils as utils
-
-
-def split2two(input_data: np.ndarray):
-    """
-    split data into timestamp, data
-    """
-    return input_data[:, 0], input_data[:, 1:]
 
 
 def show_image() -> None:
@@ -68,6 +61,7 @@ def show_map(map) -> None:
     plt.show()
 
 
+@jit(nopython=True)
 def cartesian2polar(x, y):
     """
     convert from cartesian coordinates to polar coordinates
@@ -83,6 +77,7 @@ def cartesian2polar(x, y):
     return r, theta
 
 
+@jit(nopython=True)
 def polar2cartesian(r, theta):
     """
     convert from polar coordinates to cartesian coordinates
@@ -114,20 +109,20 @@ def polar2xyz(ranges: np.ndarray, lidar_param: dict, verbose=False) -> np.ndarra
         where  n = 286, -> FOV: 190 (degree)/Angular resolution: 0.666 (degree) = 285.28
         if all cloud points are valid
     """
-    assert isinstance(ranges, np.ndarray)
-    assert isinstance(lidar_param, dict)
+    # assert isinstance(ranges, np.ndarray)
+    # assert isinstance(lidar_param, dict)
     max_range = lidar_param["max_range"]
     min_range = lidar_param["min_range"]
     # angles = np.deg2rad(np.linspace(-5, 185, 286))
     angles = lidar_param["angles"]
-    if verbose:
-        show_lidar(angles, ranges, title="Raw Lidar Scan Data")
+    # if verbose:
+    #     show_lidar(angles, ranges, title="Raw Lidar Scan Data")
     # Filter out noisy data (r<2 and r>80)
     indValid = np.logical_and((ranges <= max_range), (ranges >= min_range))
     ranges = ranges[indValid]
     angles = angles[indValid]
-    if verbose:
-        show_lidar(angles, ranges, title="Valid Lidar Scan Data")
+    # if verbose:
+    #     show_lidar(angles, ranges, title="Valid Lidar Scan Data")
     # Convert from polar to cartesian coordinates
     x, y = polar2cartesian(ranges, angles)
     # sanity check car2pol conversion
@@ -311,6 +306,7 @@ def get_T(Rot: np.ndarray, pos: np.ndarray) -> np.ndarray:
     return T
 
 
+@jit(nopython=True)
 def reg2homo(X: np.ndarray) -> np.ndarray:
     """
     Convert Matrix to homogenous coordinate
@@ -319,13 +315,14 @@ def reg2homo(X: np.ndarray) -> np.ndarray:
     return X_ -> [[X]
                   [1]]
     """
-    assert isinstance(X, np.ndarray)
+    # assert isinstance(X, np.ndarray)
     ones = np.ones((1, X.shape[1]), dtype=np.float64)
     # print(ones)
     X_ = np.concatenate((X, ones), axis=0)
     return X_
 
 
+@jit(nopython=True)
 def lidar2body(s_L_: np.ndarray, V_T_L: np.ndarray, F_T_V: np.ndarray, verbose=False) -> np.ndarray:
     """
     Convert point clouds from Lidar frame to Body frame(FOG frame)
@@ -335,16 +332,16 @@ def lidar2body(s_L_: np.ndarray, V_T_L: np.ndarray, F_T_V: np.ndarray, verbose=F
     :param verbose:
     :return: s_B_
     """
-    assert isinstance(s_L_, np.ndarray) and s_L_.shape[0] == 4
-    assert isinstance(V_T_L, np.ndarray) and V_T_L.shape[0] == 4 and V_T_L.shape[1] == 4
-    assert isinstance(F_T_V, np.ndarray) and F_T_V.shape[0] == 4 and F_T_V.shape[1] == 4
+    # assert isinstance(s_L_, np.ndarray) and s_L_.shape[0] == 4
+    # assert isinstance(V_T_L, np.ndarray) and V_T_L.shape[0] == 4 and V_T_L.shape[1] == 4
+    # assert isinstance(F_T_V, np.ndarray) and F_T_V.shape[0] == 4 and F_T_V.shape[1] == 4
     # Transform from lidar frame to vehicle frame s_L -> s_V
     s_V0_ = V_T_L @ s_L_
     # Define FOG frame to be the body frame, coincide with vehicle frame
     s_F0_ = F_T_V @ s_V0_  # s_V -> s_F
-    if verbose:
-        print(f"s_V[0](homogenous): {s_V0_.shape}")
-        print(f"s_F[0](homogenous): {s_F0_.shape}")
+    # if verbose:
+    #     print(f"s_V[0](homogenous): {s_V0_.shape}")
+    #     print(f"s_F[0](homogenous): {s_F0_.shape}")
     return s_F0_
 
 
@@ -414,7 +411,7 @@ def init_map() -> dict:
     """
     # (x_min=0.0, x_max1238), (y_min=-1012, y_max=0.0)
     MAP = dict()
-    MAP['res'] = 1  # meters
+    MAP['res'] = 0.5  # meters
     MAP['xmin'] = -100
     MAP['xmax'] = 1350
     MAP['ymin'] = -1350
@@ -446,7 +443,6 @@ def update_map(MAP: dict, Xt: np.ndarray, s_F_: np.ndarray, verbose=False) -> di
     theta_W = Xt[2]
 
     # Rotation around z-axis
-    global s_W_
     W_T_F = np.array(
         [[np.cos(theta_W), -np.sin(theta_W), 0, x_W],
          [np.sin(theta_W), np.cos(theta_W), 0, y_W],
@@ -480,7 +476,6 @@ def update_map(MAP: dict, Xt: np.ndarray, s_F_: np.ndarray, verbose=False) -> di
         # print(f"s_W[0]  with z-axis: {s_W_.shape}")
         print(f"({sx},{sy})")
 
-    global rays
     rays = []
     for i in range(ex.shape[0]):
         # Bresenham2D() assumes sx, sy, ex, ey are already in "cell coordinates"
@@ -493,9 +488,14 @@ def update_map(MAP: dict, Xt: np.ndarray, s_F_: np.ndarray, verbose=False) -> di
         MAP['log_odds_map'][xis[:-1], yis[:-1]] -= np.log(4)
         MAP['log_odds_map'][xis[-1], yis[-1]] += np.log(4)
 
-    return MAP
+    return MAP['log_odds_map']
 
 
+def sigmoid(z):
+    return np.exp(z)/ (1.0+ np.exp(z))
+
+
+@jit(nopython=True)
 def prediction_step(Xt, vt, delta_theta, dt, wt):
     """
 
@@ -506,13 +506,13 @@ def prediction_step(Xt, vt, delta_theta, dt, wt):
     :param wt: angular velocity
     :return:
     """
-    x= Xt[0, 0]
-    y= Xt[1, 0]
     theta_t = Xt[2, 0]
     dvx = vt * np.cos(theta_t)
     dvy = vt * np.sin(theta_t)
-    wt = delta_theta / dt
-    dx = dt * np.vstack((dvx, dvy, wt))
+    # wt = delta_theta / dt
+    dx = dt * np.array([[dvx],
+                       [dvy],
+                       [wt]])
     return Xt + dx
 
 
@@ -533,7 +533,6 @@ if __name__ == '__main__':
         pd.pandas.set_option('display.max_columns', None)
     if SHOW_CONFIG:
         show_image()
-
     ###################################################################################
     # Dead Reckoning
     if DEAD_RECON:
@@ -542,75 +541,74 @@ if __name__ == '__main__':
         traj = dead_reckoning(sync_fog_encoder_fname, expert=False, verbose=VERBOSE)
         utils.toc(start_dead_Recon, "Finish Dead_Reckoning")
 
-    ###################################################################################
-    start_init = utils.tic("--------INIT SENSOR PARAM--------")
-    # Init lidar_param, FOG_param, encoder_param
-    lidar_param = get_lidar_param(verbose=VERBOSE)
-    FOG_param = get_FOG_param(verbose=VERBOSE)
-    encoder_param = get_encoder_param(verbose=VERBOSE)
-    print("lidar_param\nFOG_param\nencoder_param")
-    if VERBOSE:
-        # {V}T{L}
-        print("lidar2vehicle_param[T]: {}\n{}".format(lidar_param["V_T_L"].shape, lidar_param["V_T_L"]))
-        # {V}T{F}
-        print("vehicle2FOG_param[T]: {}\n{}".format(FOG_param["F_T_V"].shape, FOG_param["F_T_V"]))
-
-    ###################################################################################
-    start_map = utils.tic("--------INIT MAP--------")
-    '''Mapping'''
-    # Assume the map prior is uniform, occupied and free space are equally likely
-    MAP = init_map()
-    with open('dead_reckon_traj.npy', 'rb') as f:
-        traj = np.load(f)
-    if not DEAD_RECON:
-        plt.figure()
-        plt.scatter(traj[0, :], traj[1, :])
-        plt.title("Dead Reckoning (No Noise)")
-        plt.show()
-    utils.toc(start_map, "Finish Loading Dead_Reckoning Trajectory")
-
-    ###################################################################################
-    # _, lidar_data = utils.read_data_from_csv('data/sensor_data/lidar.csv')
-    start_lidar = utils.tic("--------LOAD & TRANSFORM DATA--------")
-    # sync_merge_all_inner = pd.read_csv("data/sync_merge_all_inner.csv")
-    sync_merge_all= pd.read_csv("data/sync_merge_all_left.csv")
-    # print(f"sync_merge_all_inner: {sync_merge_all_inner.shape}")
-    # print(sync_merge_all_inner.head())
-    print(f"sync_merge_all: {sync_merge_all.shape}")
-    # print(sync_merge_all_left.head())
-    utils.toc(start_map, "Finish loading Data")
-
-    num_state = sync_merge_all.shape[0]
-    lidar_data = sync_merge_all.drop(['timestamp', 'delta_yaw', 'dt', 'wt', 'linear_velocity(m/s)'], axis=1).values
-    vt = sync_merge_all['linear_velocity(m/s)'].values
-    delta_yaw = sync_merge_all['delta_yaw'].values
-    tau = sync_merge_all['dt'].values
-    wt = sync_merge_all['wt'].values
-
-    # At t=0 assume robots locate at (0,0) and orientation 0
-    Xt = np.zeros((3, 1))
-    lst = [Xt]
-    for i in tqdm(range(num_state)): # num_state
-        # Lidar data is not NaN
-        ranges = lidar_data[i, :]
-        if not np.isnan(np.sum(ranges)):
-            # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros
-            s_L = polar2xyz(ranges, lidar_param, verbose=False)
-            # print(f"s_L[0]: {s_L.shape}")
-            s_F_ = lidar2body(s_L_=reg2homo(s_L), V_T_L=lidar_param["V_T_L"], F_T_V=FOG_param["F_T_V"])
-            MAP = update_map(MAP, Xt, s_F_, verbose=False)
-        if i % 100000 ==0 and i !=0:
-            show_map(np.where(MAP['log_odds_map'] > 0, 1, 0).astype(np.int8))
-        # TODO: prediction Xt add noise
-        Xt = prediction_step(Xt, vt[i], delta_yaw[i], tau[i], wt[i])
-        lst.append(Xt)
-    ##################################################################################
-    MAP['map'] = np.where(MAP['log_odds_map'] > 0, 1, 0).astype(np.int8)
-    show_map(MAP['map'])
-    # Save result
-    with open('map_test.pkl', 'wb') as f:
-        pickle.dump(MAP, f)
-    utils.toc(start_map, "Finish MAP Creation & Update MAP log-odds")
+    # ###################################################################################
+    # start_init = utils.tic("--------INIT SENSOR PARAM--------")
+    # # Init lidar_param, FOG_param, encoder_param
+    # lidar_param = get_lidar_param(verbose=VERBOSE)
+    # FOG_param = get_FOG_param(verbose=VERBOSE)
+    # encoder_param = get_encoder_param(verbose=VERBOSE)
+    # print("lidar_param\nFOG_param\nencoder_param")
+    # if VERBOSE:
+    #     # {V}T{L}
+    #     print("lidar2vehicle_param[T]: {}\n{}".format(lidar_param["V_T_L"].shape, lidar_param["V_T_L"]))
+    #     # {V}T{F}
+    #     print("vehicle2FOG_param[T]: {}\n{}".format(FOG_param["F_T_V"].shape, FOG_param["F_T_V"]))
+    #
+    # ###################################################################################
+    # start_map = utils.tic("--------INIT MAP--------")
+    # '''Mapping'''
+    # # Assume the map prior is uniform, occupied and free space are equally likely
+    # MAP = init_map()
+    # if not DEAD_RECON:
+    #     with open('dead_reckon_traj.npy', 'rb') as f:
+    #         traj = np.load(f)
+    #     plt.figure()
+    #     plt.scatter(traj[0, :], traj[1, :])
+    #     plt.title("Dead Reckoning (No Noise)")
+    #     plt.show()
+    # utils.toc(start_map, "Finish Loading Dead_Reckoning Trajectory")
+    #
+    # ###################################################################################
+    # start_lidar = utils.tic("--------LOAD & TRANSFORM DATA--------")
+    # # sync_merge_all = pd.read_csv("data/sync_merge_all_inner.csv")
+    # sync_merge_all= pd.read_csv("data/sync_merge_all_left.csv")
+    # # print(f"sync_merge_all_inner: {sync_merge_all_inner.shape}")
+    # # print(sync_merge_all_inner.head())
+    # print(f"sync_merge_all: {sync_merge_all.shape}")
+    # utils.toc(start_map, "Finish loading Data")
+    #
+    # num_state = sync_merge_all.shape[0]
+    # lidar_data = sync_merge_all.drop(['timestamp', 'delta_yaw', 'dt', 'wt', 'linear_velocity(m/s)'], axis=1).values
+    # vt = sync_merge_all['linear_velocity(m/s)'].values
+    # delta_yaw = sync_merge_all['delta_yaw'].values
+    # tau = sync_merge_all['dt'].values
+    # wt = sync_merge_all['wt'].values
+    #
+    # # At t=0 assume robots locate at (0,0) and orientation 0
+    # Xt = np.zeros((3, 1))
+    # lst = [Xt]
+    # for i in tqdm(range(num_state)):
+    #     # If Lidar data is not NaN update map
+    #     ranges = lidar_data[i, :]
+    #     if not np.isnan(np.sum(ranges)):
+    #         # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros
+    #         s_L = polar2xyz(ranges, lidar_param, verbose=False)
+    #         s_F_ = lidar2body(s_L_=reg2homo(s_L), V_T_L=lidar_param["V_T_L"], F_T_V=FOG_param["F_T_V"])
+    #         # update map
+    #         MAP['log_odds_map'] = update_map(MAP, Xt, s_F_, verbose=False)
+    #     if VERBOSE and i % 100000 ==0 and i !=0:
+    #         show_map(np.where(MAP['log_odds_map'] > 0, 1, 0).astype(np.int8))
+    #     # TODO: prediction Xt add noise
+    #     Xt = prediction_step(Xt, vt[i], delta_yaw[i], tau[i], wt[i])
+    #     lst.append(Xt)
+    # ##################################################################################
+    # # Model the map cells mi as independent Bernoulli random variables
+    # MAP['map'] = np.where(MAP['log_odds_map'] > 0, 1, -1).astype(np.int8)
+    # show_map(MAP['map'])
+    # # Save result
+    # with open('map_test.pkl', 'wb') as f:
+    #     pickle.dump(MAP, f)
+    # utils.toc(start_map, "Finish MAP Creation & Update MAP log-odds")
     ##################################################################################
     '''Prediction'''
 
