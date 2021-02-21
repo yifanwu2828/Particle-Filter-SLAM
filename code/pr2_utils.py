@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt; plt.ion()
 from mpl_toolkits.mplot3d import Axes3D
 import time
+from numba import jit
 
 
 def tic(message=None):
