@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import pickle
 from tqdm import tqdm
-from numba import jit
+from numba import jit, prange
 
 import pr2_utils as utils
 
@@ -48,7 +48,7 @@ def show_laserXY(xs, ys) -> None:
     plt.show()
 
 
-def show_map(map) -> None:
+def show_map(map, title='') -> None:
     """
     plot Occupancy grid map
     :param map: grid map
@@ -56,7 +56,7 @@ def show_map(map) -> None:
     """
     plt.figure()
     plt.imshow(map, cmap="hot")
-    plt.title("Occupancy grid map")
+    plt.title(title)
     # plt.grid(True)
     plt.show()
 
@@ -420,6 +420,7 @@ def init_map() -> dict:
     MAP['sizey'] = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
     MAP['map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)  # DATA TYPE: char or int8
     MAP['log_odds_map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.float64)
+    MAP['cell_trajs_map'] = np.zeros((MAP['sizex'], MAP['sizey']), dtype=np.int8)
 
     print(f"map resolution: {MAP['res']}")
     print(f"map size: {MAP['map'].shape}")
@@ -461,10 +462,12 @@ def update_map(MAP: dict, Xt: np.ndarray, s_F_: np.ndarray, verbose=False) -> di
     # Lidar data in world frame
     ex_W = s_W_[0, :]
     ey_W = s_W_[1, :]
+
     # convert from meters to cells
     # start point of laser beam in world frame to grid cell
     sx = int(np.ceil((x_W - MAP['xmin']) / MAP['res']).astype(np.int16) - 1)
     sy = int(np.ceil((y_W - MAP['ymin']) / MAP['res']).astype(np.int16) - 1)
+    # cell_traj = np.vstack((sx, sy))
     # end point of laser beam in world frame to grid cell
     ex = np.ceil((ex_W - MAP['xmin']) / MAP['res']).astype(np.int16) - 1
     ey = np.ceil((ey_W - MAP['ymin']) / MAP['res']).astype(np.int16) - 1
@@ -475,23 +478,24 @@ def update_map(MAP: dict, Xt: np.ndarray, s_F_: np.ndarray, verbose=False) -> di
         # print(f"s_W[0]  with z-axis: {s_W_.shape}")
         print(f"({sx},{sy})")
 
-    global ray
-    rays = []
+    # global rays
+    # rays = []
     for i in range(ex.shape[0]):
         # Bresenham2D() assumes sx, sy, ex, ey are already in "cell coordinates"
         ray = utils.bresenham2D(sx=sx, sy=sy, ex=ex[i], ey=ey[i])
-        rays.append(ray)
+        # rays.append(ray)
         xis = ray[0, :].astype(np.int16)
         yis = ray[1, :].astype(np.int16)
 
         # log-odds if zt indicates mi is occupied +log4, -log4 otherwise
         MAP['log_odds_map'][xis[:-1], yis[:-1]] -= np.log(4)
         MAP['log_odds_map'][xis[-1], yis[-1]] += np.log(4)
+        MAP['cell_trajs_map'][sx, sy] = 1
 
     return MAP['log_odds_map']
 
 
-def prediction_step(Xt, vt, dt, wt, noise=False):
+def prediction_step(Xt, vt, dt, wt, noise=False) -> np.ndarray:
     """
     :param Xt: pose and yaw angle in rad
     :param vt: linear velocity
@@ -503,7 +507,7 @@ def prediction_step(Xt, vt, dt, wt, noise=False):
     theta_t = Xt[2, :]
     N = Xt.shape[1]
     if noise:
-        cov_vt, cov_wt = 10, 1
+        cov_vt, cov_wt = 23.792928582405533, 0.002327690853394245
         cov = np.array([[cov_vt, 0],
                         [0, cov_wt]])
         gaussian = np.random.multivariate_normal([0, 0], cov, N).T
@@ -516,28 +520,105 @@ def prediction_step(Xt, vt, dt, wt, noise=False):
         eps = np.zeros(Xt.shape)
     dx = vt * np.cos(theta_t)
     dy = vt * np.sin(theta_t)
-    wt = wt* np.ones((1, N))
+    wt = wt * np.ones((1, N))
 
-    dX =np.vstack((dx, dy, wt))
-    return Xt + dt*dX + eps
+    dX = np.vstack((dx, dy, wt))
+    return Xt + dt * (dX + eps)
+
+
+def update_step(MAP: dict, particles: np.ndarray, weights: np.ndarray, s_F_: np.ndarray):
+    """
+    Update particle weights
+    :param MAP:
+    :param particles:
+    :param weights:
+    :param s_F_:
+    :return:
+    """
+    map = np.where(MAP['log_odds_map'] > 0, 1, 0).astype(np.int8)
+    x_im = np.arange(MAP['xmin'], MAP['xmax'] + MAP['res'], MAP['res'])  # x-positions of each pixel of the map
+    y_im = np.arange(MAP['ymin'], MAP['ymax'] + MAP['res'], MAP['res'])  # y-positions of each pixel of the map
+    # x deviation, y deviation
+    x_range = np.arange(-4 * MAP['res'], 5 * MAP['res'], MAP['res'])
+    y_range = np.arange(-4 * MAP['res'], 5 * MAP['res'], MAP['res'])
+    N = particles.shape[1]
+    correlation = np.zeros(N)
+    for i in range(N):
+        Xt = particles[:, i]
+        x_W = Xt[0]
+        y_W = Xt[1]
+        theta_W = Xt[2]
+        W_T_F = np.array(
+            [[np.cos(theta_W), -np.sin(theta_W), 0, x_W],
+             [np.sin(theta_W), np.cos(theta_W), 0, y_W],
+             [0, 0, 1, 0],
+             [0, 0, 0, 1]],
+            dtype=np.float64)
+        # Lidar data in world frame
+        s_W_ = W_T_F @ s_F_
+        # Lidar data in world frame
+        ex_W = s_W_[0, :]
+        ey_W = s_W_[1, :]
+        Y = np.stack((ex_W, ey_W))
+        # Calculate correlation
+        c = utils.mapCorrelation(map, x_im, y_im, Y, x_range, y_range)
+        correlation[i] = np.max(c)
+    # Update particle weight
+    phi = softmax(correlation)
+    weights = weights * phi / np.sum(weights * phi)
+    return particles, weights
+
+
+@jit(nopython=True)
+def softmax(x):
+    # softmax function
+    e_x = np.exp(x - np.max(x))
+    return e_x / (np.sum(e_x)+1e-9)
+
+
+@jit(nopython=True)
+def calculate_N_eff(weights: np.ndarray, N: int):
+    """
+    :param weights:
+    :param N:
+    :return: N_eff add 1e-8 to prevent DividebyZero error
+    """
+    return 1 / (weights.reshape(1, N) @ weights.reshape(N, 1) + 1e-8)
+
+
+@jit(nopython=True)
+def resampling(particles: np.ndarray, weights: np.ndarray, N: int):
+    """
+    Stratified (low variance) resampling
+    :param particles: old particles
+    :param weights: old weights
+    :param N: num of particles
+    :return: new particles, new weights
+    """
+    new_particles = np.zeros((3, N))
+    new_weights = np.ones(N) / N
+    j = 0
+    c = weights[0]
+    for k in range(N):
+        u = np.random.uniform(0, 1 / N)  # uniform distribution
+        beta = u + k / N  # scan each part in the circle
+        while beta > c:
+            j = j + 1
+            c = c + weights[j]  # increasing the decision section length
+        new_particles[:, k] = particles[:, j]
+    return new_particles, new_weights
 
 
 def main():
-
     pass
 
 
 if __name__ == '__main__':
     ###################################################################################
     # Running Config
-    np.seterr(all='raise')
-    pd.set_option("precision", 10)
-    MAX_COL = False
     VERBOSE = False
     DEAD_RECON = False
     SHOW_CONFIG = False
-    if MAX_COL:
-        pd.pandas.set_option('display.max_columns', None)
     if SHOW_CONFIG:
         show_image()
     ###################################################################################
@@ -577,10 +658,8 @@ if __name__ == '__main__':
 
     ###################################################################################
     start_lidar = utils.tic("--------LOAD & TRANSFORM DATA--------")
-    # sync_merge_all = pd.read_csv("data/sync_merge_all_inner.csv")
     sync_merge_all = pd.read_csv("data/sync_merge_all_left.csv")
-    # print(f"sync_merge_all: {sync_merge_all.shape}")
-    utils.toc(start_map, "Finish loading Data")
+    print(f"sync_merge_all: {sync_merge_all.shape}")
 
     num_state = sync_merge_all.shape[0]
     lidar_data = sync_merge_all.drop(['timestamp', 'delta_yaw', 'dt', 'wt', 'linear_velocity(m/s)'], axis=1).values
@@ -591,35 +670,60 @@ if __name__ == '__main__':
 
     cov_vt = np.cov(vt)
     cov_wt = np.cov(wt)
-    print(cov_vt, cov_wt)
+    print(f"covariance:({cov_vt}, {cov_wt})")
+    utils.toc(start_map, "Finish loading Data")
+
+
+    ###################################################################################
+    '''Init Var'''
     # TODO: change num of particles
     # At t=0 assume robots locate at (0,0) and orientation 0 -> Xt = np.zeros((3, 1))
-    N = 1
+    N = 10
+    N_threshold = 0.2 * N
     particles = np.zeros((3, N))
     weights = np.ones(N) / N
-    lst = [particles]
-    for i in tqdm(range(num_state)):    #
+    trajectory = []
+    cell_trajs = []
+    ###################################################################################
+    '''Debug Var'''
+    eff = set()
+    ###################################################################################
+    # for i in tqdm(range(num_state)):  #
+    for i in tqdm(range(10000)):
         # If Lidar data is not NaN update map
         ranges = lidar_data[i, :]
         if not np.isnan(np.sum(ranges)):
             # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros
             s_L = polar2xyz(ranges, lidar_param, verbose=False)
             s_F_ = lidar2body(s_L_=reg2homo(s_L), V_T_L=lidar_param["V_T_L"], F_T_V=FOG_param["F_T_V"])
+            # Update weight
+            particles, weights = update_step(MAP, particles, weights, s_F_)
+            # Find particle with largest weight
+            max_weight = np.argmax(weights)
+            Xt = particles[:, max_weight]
+            # Record trajectory
+            trajectory.append(Xt)
             # update map
-            # TODO: find particle with largest weight
-            Xt = particles[:, 0]
             MAP['log_odds_map'] = update_map(MAP, Xt, s_F_, verbose=False)
+            # cell_trajs.append(cell_traj)
+            # Resample the particles
+            N_eff = calculate_N_eff(weights, N)
+            # eff.add(float(N_eff))
+            if N_eff < N_threshold:
+                particles, weight = resampling(particles, weights, N)
+
         if i % 100000 == 0 and i != 0:
             show_map(np.where(MAP['log_odds_map'] > 0, 1, 0).astype(np.int8))
         '''Prediction'''
-        # TODO: prediction Xt add noise
-        particles = prediction_step(particles, vt[i], tau[i], wt[i], noise=False)
-        lst.append(particles)
+        particles = prediction_step(particles, vt[i], tau[i], wt[i], noise=True)
+
     ##################################################################################
     # Model the map cells mi as independent Bernoulli random variables
     MAP['map'] = np.where(MAP['log_odds_map'] > 0, 1, 0).astype(np.int8)
-    show_map(MAP['map'])
-    # # Save result
+    show_map(MAP['map'], title="Occupancy grid map")
+    show_map(MAP["cell_trajs_map"], title="cell_trajs")
+    show_map(MAP['map']+MAP["cell_trajs_map"], title="map&trajs")
+    # Save result
     # with open('map_test.pkl', 'wb') as f:
     #     pickle.dump(MAP, f)
     # with open('map_test.pkl', 'rb') as f:
@@ -627,3 +731,16 @@ if __name__ == '__main__':
     # show_map(MAP['map'])
     utils.toc(start_map, "Finish MAP Creation & Update MAP log-odds")
     ##################################################################################
+    trajectory = np.vstack(trajectory)
+    trajectory = trajectory.T
+    # with open('test_traj.npy', 'wb') as f:
+    #     np.save(f, trajectory)
+    # plt.figure()
+    # plt.scatter(trajectory[0, :], trajectory[1, :])
+    # plt.title("trajectory (with Noise)")
+    # plt.show()
+    # cell_trajs = np.hstack(cell_trajs)
+    # with open('cell_traj.npy', 'wb') as f:
+    #     np.save(f, cell_trajs)
+    # with open('cell_traj.npy', 'rb') as f:
+    #     cell_trajs = np.load(f)
