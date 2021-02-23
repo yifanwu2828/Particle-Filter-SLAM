@@ -698,130 +698,162 @@ def compute_stereo(path_l, path_r, verbose=False):
     return disparity
 
 
+@jit(nopython=True)
+def cam2body(s_C_, V_T_C, F_T_V):
+    """
+    Convert from camera frame to body frame
+    :param s_C:
+    :param V_T_C:
+    :param F_T_V:
+    :return: s_F_
+    """
+    s_V_ = V_T_C @ s_C_
+    s_F_ = F_T_V @ s_V_
+    return s_F_
+
+def texture_mapping():
+    pass
+
+
 def main():
+
     pass
 
 
 if __name__ == '__main__':
-    ###################################################################################
-    # Running Config
-    VERBOSE = False
-    DEAD_RECON = False
-    SHOW_CONFIG = False
-    if SHOW_CONFIG:
-        show_image()
-    ###################################################################################
-    # Dead Reckoning
-    # if DEAD_RECON:
-    #     start_dead_Recon = utils.tic("--------DEAD RECKONING--------")
-    #     sync_fog_encoder_fname = "data/sync_fog_encoder_left.csv"
-    #     traj = dead_reckoning(sync_fog_encoder_fname, expert=False, verbose=VERBOSE)
-    #     utils.toc(start_dead_Recon, "Finish Dead_Reckoning")
-
-    ###################################################################################
-    start_init = utils.tic("--------INIT SENSOR PARAM--------")
-    # Init lidar_param, FOG_param, encoder_param
-    lidar_param = get_lidar_param(verbose=VERBOSE)
-    FOG_param = get_FOG_param(verbose=VERBOSE)
-    encoder_param = get_encoder_param(verbose=VERBOSE)
-    print("lidar_param\nFOG_param\nencoder_param")
-    if VERBOSE:
-        # {V}T{L}
-        print("lidar2vehicle_param[T]: {}\n{}".format(lidar_param["V_T_L"].shape, lidar_param["V_T_L"]))
-        # {V}T{F}
-        print("vehicle2FOG_param[T]: {}\n{}".format(FOG_param["F_T_V"].shape, FOG_param["F_T_V"]))
-
-    ###################################################################################
-    start_map = utils.tic("--------INIT MAP--------")
-    '''Mapping'''
-    # Assume the map prior is uniform, occupied and free space are equally likely
-    MAP = init_map()
-    # if not DEAD_RECON:
-    #     with open('dead_reckon_traj.npy', 'rb') as f:
-    #         traj = np.load(f)
-    #     plt.figure()
-    #     plt.scatter(traj[0, :], traj[1, :])
-    #     plt.title("Dead Reckoning (No Noise)")
-    #     plt.show()
-    utils.toc(start_map, "Finish Loading Dead_Reckoning Trajectory")
-
-    ###################################################################################
-    start_lidar = utils.tic("--------LOAD & TRANSFORM DATA--------")
-    sync_merge_all = pd.read_csv("data/sync_merge_all_left.csv")
-    print(f"sync_merge_all: {sync_merge_all.shape}")
-
-    num_state = sync_merge_all.shape[0]
-    lidar_data = sync_merge_all.drop(['timestamp', 'delta_yaw', 'dt', 'wt', 'linear_velocity(m/s)'], axis=1).values
-    vt = sync_merge_all['linear_velocity(m/s)'].values
-    delta_yaw = sync_merge_all['delta_yaw'].values
-    tau = sync_merge_all['dt'].values
-    wt = sync_merge_all['wt'].values
-
-    cov_vt = np.cov(vt)
-    cov_wt = np.cov(wt)
-    print(f"covariance:({cov_vt}, {cov_wt})")
-    utils.toc(start_map, "Finish loading Data")
-
-    ###################################################################################
-    '''Init Var'''
-    # At t=0 assume robots locate at (0,0) and orientation 0 -> Xt = np.zeros((3, 1))
-    # N = 3
-    N = 50
-    N_threshold = 0.2 * N
-    particles = np.zeros((3, N))
-    weights = np.ones(N) / N
-    trajectory = []
-    cell_trajs = []
-    ###################################################################################
-    '''Debug Var'''
-    eff = set()
-    ###################################################################################
-    '''SLAM'''
-    for i in tqdm(range(num_state)):  #
-    # for i in tqdm(range(10000)):
-        # If Lidar data is not NaN, update map
-        ranges = lidar_data[i, :]
-        if not np.isnan(np.sum(ranges)):
-            # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros
-            s_L = polar2xyz(ranges, lidar_param, verbose=False)
-            s_F_ = lidar2body(s_L_=reg2homo(s_L), V_T_L=lidar_param["V_T_L"], F_T_V=FOG_param["F_T_V"])
-            ''' Update_Step '''
-            particles, weights = update_step(MAP, particles, weights, s_F_)
-            N_eff = calculate_N_eff(weights, N)
-            if N_eff < N_threshold:
-                eff.add(float(N_eff))
-                particles, weight = resampling(particles, weights, N)
-            # Find particle with largest weight
-            max_weight = np.argmax(weights)
-            Xt = particles[:, max_weight]
-            # Record trajectory
-            trajectory.append(Xt)
-            # update log_odds map
-            MAP['log_odds_map'] = update_map(MAP, Xt, s_F_, verbose=False)
-            # Resample the particles
-
-        if i % 100000 == 0 and i != 0:
-            show_map(np.where(MAP['log_odds_map'] > 0, 1, 0).astype(np.int8))
-            print(len(eff))
-        '''Prediction Step'''
-        particles = prediction_step(particles, vt[i], tau[i], wt[i], noise=True)
-
-    ##################################################################################
-    # Model the map cells mi as independent Bernoulli random variables
-    MAP['map'] = np.where(MAP['log_odds_map'] > 0, 1, 0).astype(np.int8)
-    show_map(MAP['map'], title="Occupancy grid map")
-    show_map(MAP["cell_trajs_map"], title="cell_trajs")
-    show_map(MAP['map'] + MAP["cell_trajs_map"], title="map&trajs")
-    # Save result
-    # with open('map_test.pkl', 'wb') as f:
+    # ###################################################################################
+    # # Running Config
+    # VERBOSE = False
+    # DEAD_RECON = False
+    # SHOW_CONFIG = False
+    # if SHOW_CONFIG:
+    #     show_image()
+    # ###################################################################################
+    # # Dead Reckoning
+    # # if DEAD_RECON:
+    # #     start_dead_Recon = utils.tic("--------DEAD RECKONING--------")
+    # #     sync_fog_encoder_fname = "data/sync_fog_encoder_left.csv"
+    # #     traj = dead_reckoning(sync_fog_encoder_fname, expert=False, verbose=VERBOSE)
+    # #     utils.toc(start_dead_Recon, "Finish Dead_Reckoning")
+    #
+    # ###################################################################################
+    # start_init = utils.tic("--------INIT SENSOR PARAM--------")
+    # # Init lidar_param, FOG_param, encoder_param
+    # lidar_param = get_lidar_param(verbose=VERBOSE)
+    # FOG_param = get_FOG_param(verbose=VERBOSE)
+    # encoder_param = get_encoder_param(verbose=VERBOSE)
+    # left_cam_param = get_left_cam_param()
+    # right_cam_param = get_right_cam_param()
+    # print("lidar_param\nFOG_param\nencoder_param")
+    # if VERBOSE:
+    #     # {V}T{L}
+    #     print("lidar2vehicle_param[T]: {}\n{}".format(lidar_param["V_T_L"].shape, lidar_param["V_T_L"]))
+    #     # {V}T{F}
+    #     print("vehicle2FOG_param[T]: {}\n{}".format(FOG_param["F_T_V"].shape, FOG_param["F_T_V"]))
+    #
+    # ###################################################################################
+    # start_map = utils.tic("--------INIT MAP--------")
+    # '''Mapping'''
+    # # Assume the map prior is uniform, occupied and free space are equally likely
+    # MAP = init_map()
+    # # if not DEAD_RECON:
+    # #     with open('dead_reckon_traj.npy', 'rb') as f:
+    # #         traj = np.load(f)
+    # #     plt.figure()
+    # #     plt.scatter(traj[0, :], traj[1, :])
+    # #     plt.title("Dead Reckoning (No Noise)")
+    # #     plt.show()
+    # utils.toc(start_map, "Finish Loading Dead_Reckoning Trajectory")
+    #
+    # ###################################################################################
+    # start_lidar = utils.tic("--------LOAD & TRANSFORM DATA--------")
+    # '''Stereo Image'''
+    # left_image_path = "./data/stereo_images/stereo_left/"
+    # right_image_path = "./data/stereo_images/stereo_right/"
+    # left_img_fname = sorted([f for f in os.listdir(left_image_path)])
+    # left_img_timestamp = sorted([os.path.splitext(f)[0] for f in os.listdir(left_image_path)])
+    # right_img_fname = [f for f in os.listdir(right_image_path)]
+    # right_img_timestamp = [os.path.splitext(f)[0] for f in os.listdir(right_image_path)]
+    # print(f"Num of image form left CAM: {len(left_img_timestamp)}")
+    # path_l, path_r = left_image_path + left_img_fname[0], right_image_path + right_img_fname[0]
+    #
+    # '''Lidar, FOG, Encoder Data'''
+    # sync_merge_all = pd.read_csv("data/sync_merge_all_left.csv")
+    # print(f"sync_merge_all: {sync_merge_all.shape}")
+    #
+    # num_state = sync_merge_all.shape[0]
+    # lidar_data = sync_merge_all.drop(['timestamp', 'delta_yaw', 'dt', 'wt', 'linear_velocity(m/s)'], axis=1).values
+    # vt = sync_merge_all['linear_velocity(m/s)'].values
+    # delta_yaw = sync_merge_all['delta_yaw'].values
+    # tau = sync_merge_all['dt'].values
+    # wt = sync_merge_all['wt'].values
+    #
+    # cov_vt = np.cov(vt)
+    # cov_wt = np.cov(wt)
+    # print(f"covariance:({cov_vt}, {cov_wt})")
+    # utils.toc(start_map, "Finish loading Data")
+    #
+    # ###################################################################################
+    # '''Init Var'''
+    # # At t=0 assume robots locate at (0,0) and orientation 0 -> Xt = np.zeros((3, 1))
+    # # N = 1
+    # # N = 3
+    # # N = 25
+    # # N = 50
+    # N = 100
+    # N_threshold = 5  # 0.2 * N
+    # particles = np.zeros((3, N))
+    # weights = np.ones(N) / N
+    # trajectory = []
+    # cell_trajs = []
+    # ###################################################################################
+    # '''SLAM'''
+    # for i in tqdm(range(num_state)):  #
+    # # for i in tqdm(range(10000)):
+    #     # If Lidar data is not NaN, update map
+    #     ranges = lidar_data[i, :]
+    #     if not np.isnan(np.sum(ranges)):
+    #         # Convert LiDAR scan from polar to cartesian coord attached z axis with zeros
+    #         s_L = polar2xyz(ranges, lidar_param, verbose=False)
+    #         s_F_ = lidar2body(s_L_=reg2homo(s_L), V_T_L=lidar_param["V_T_L"], F_T_V=FOG_param["F_T_V"])
+    #         ''' Update_Step '''
+    #         particles, weights = update_step(MAP, particles, weights, s_F_)
+    #         N_eff = calculate_N_eff(weights, N)
+    #         if N_eff < N_threshold:
+    #             particles, weight = resampling(particles, weights, N)
+    #         # Find particle with largest weight
+    #         max_weight = np.argmax(weights)
+    #         Xt = particles[:, max_weight]
+    #         # Record trajectory
+    #         trajectory.append(Xt)
+    #         # update log_odds map
+    #         MAP['log_odds_map'] = update_map(MAP, Xt, s_F_, verbose=False)
+    #         # Resample the particles
+    #
+    #     if i % 100000 == 0 and i != 0:
+    #         show_map(np.where(MAP['log_odds_map'] > 0, 1, 0).astype(np.int8))
+    #     '''Prediction Step'''
+    #     particles = prediction_step(particles, vt[i], tau[i], wt[i], noise=True)
+    # utils.toc(start_map, "Finish MAP Creation & Update MAP log-odds")
+    # ##################################################################################
+    # # Model the map cells mi as independent Bernoulli random variables
+    # MAP['map'] = np.where(MAP['log_odds_map'] > 0, 1, 0).astype(np.int8)
+    # show_map(MAP['map'], title="Occupancy grid map")
+    # show_map(MAP["cell_trajs_map"], title="cell_trajs")
+    # show_map(MAP['map'] + MAP["cell_trajs_map"], title="map&trajs")
+    # # Save result
+    # with open('map_test_100_tresh_5.pkl', 'wb') as f:
     #     pickle.dump(MAP, f)
-    # with open('map_test.pkl', 'rb') as f:
-    #     MAP= pickle.load(f)
-    # show_map(MAP['map'])
-    utils.toc(start_map, "Finish MAP Creation & Update MAP log-odds")
+    with open('map_test_100_tresh_5.pkl', 'rb') as f:
+        MAP= pickle.load(f)
+        show_map(MAP['map'].astype(np.int8), title="Occupancy grid map")
+        show_map(MAP["cell_trajs_map"], title="cell_trajs")
+        show_map((MAP['map'] + MAP["cell_trajs_map"]).astype(np.int8), title="map&trajs")
+    show_map(MAP['map'])
+
     ##################################################################################
-    trajectory = np.vstack(trajectory)
-    trajectory = trajectory.T
+    # trajectory = np.vstack(trajectory)
+    # trajectory = trajectory.T
     # with open('test_traj.npy', 'wb') as f:
     #     np.save(f, trajectory)
     # plt.figure()
@@ -833,54 +865,55 @@ if __name__ == '__main__':
     #     np.save(f, cell_trajs)
     # with open('cell_traj.npy', 'rb') as f:
     #     cell_trajs = np.load(f)
-
-
-
-    # start_cam = utils.tic("--------Texture Mapping--------")
-    # print(os.getcwd())
-    # left_cam_param = get_left_cam_param()
-    # right_cam_param = get_right_cam_param()
-    # print("left_cam:\n", left_cam_param["projection_matrix"])
-    # print("right_cam:\n", right_cam_param["projection_matrix"])
-    # left_image_path = "./data/stereo_images/stereo_left/"
-    # right_image_path = "./data/stereo_images/stereo_right/"
-    # left_img_fname = sorted([f for f in os.listdir(left_image_path)])
-    # left_img_timestamp = sorted([os.path.splitext(f)[0] for f in os.listdir(left_image_path)])
-    # right_img_fname = [f for f in os.listdir(right_image_path)]
-    # right_img_timestamp = [os.path.splitext(f)[0] for f in os.listdir(right_image_path)]
-    # print(f"Num of image form left CAM: {len(left_img_timestamp)}")
-    # path_l, path_r = left_image_path + left_img_fname[0], right_image_path + right_img_fname[0]
-    # '''
-    # 1. Find the depth of each pixel in the left camera.
-    # 2. Find the 3D Cartesian coordinates of each pixel in the left camera frame.
-    # 3. Transform the pixels from the camera frame to the world frame using
-    #     the best (highest weight) particle at each time step.
-    #     Find the map cells that these points fall in.
-    #     You might want to consider only the pixels whose z coordinate in the world frame falls
-    #     within a small plus/minus range of the flat plane of the map,
-    #     i.e., do not store colors of things that are way above or way below the plane that you are mapping.
-    # 4.Associate the RGB values with the corresponding map cells.
-    #  It is fine to over-write previous RGB values and it is not necessary to do any kind of smoothing or interpolation.
-    # '''
-    # # image_width: 1280
-    # # image_height: 560
+    #################################################################################
+    start_cam = utils.tic("--------Texture Mapping--------")
+    '''
+    1. Find the depth of each pixel in the left camera.
+    2. Find the 3D Cartesian coordinates of each pixel in the left camera frame.
+    3. Transform the pixels from the camera frame to the world frame using
+        the best (highest weight) particle at each time step.
+        Find the map cells that these points fall in.
+        You might want to consider only the pixels whose z coordinate in the world frame falls
+        within a small plus/minus range of the flat plane of the map,
+        i.e., do not store colors of things that are way above or way below the plane that you are mapping.
+    4.Associate the RGB values with the corresponding map cells.
+     It is fine to over-write previous RGB values and it is not necessary to do any kind of smoothing or interpolation.
+    '''
     # PR = right_cam_param["projection_matrix"]
     # b = left_cam_param["baseline"]
     # fsu = PR[0, 0]
     # fsv = PR[1, 1]
     # cu = PR[0, 2]
     # cv = PR[1, 2]
-    # d = compute_stereo(path_l, path_r, verbose=True)
+    # d = compute_stereo(path_l, path_r, verbose=False)
     # print("d:", d.shape)
     # z = fsu*b/(d + 1e-8)
-    # img = np.zeros(d.shape)
+    # # (560, 1280)
+    # a= np.array(range(1280)).reshape(1, -1)
+    # b = np.array(range(560)).reshape(1, -1)
+    # # print("uL vector", a.shape)
+    # # print("vL vector", b.shape)
     #
+    # uL = np.tile(a, (560, 1))
+    # vL = np.tile(b, (1280, 1)).T
+    # # print("uL", uL.shape)
+    # # print("vL", vL.shape)
     #
-    # # x = (uL-cu)/fsu * z
-    # # y = (vL-cv)/fsv * z
-    # print(x.shape)
-    # print(y.shape)
+    # x = (uL-cu)/fsu * z
+    # y = (vL-cv)/fsv * z
+    # # print("x", x.shape)
+    # # print("y", y.shape)
+    # # print("z", z.shape)
     #
+    # x_vec = x.flatten()
+    # y_vec = y.flatten()
+    # z_vec = z.flatten()
+    # s_C = np.vstack((x_vec, y_vec, z_vec))
+    # # print(s_C.shape)
     #
+    # # Transform form camera frame to fog frame s_C-> s_V ->s_F
+    # V_T_C = left_cam_param["V_T_C"]
+    # F_T_V = FOG_param["F_T_V"]
     #
+    # s_F = cam2body(reg2homo(s_C), V_T_C, F_T_V)
     # utils.toc(start_cam, "Texture Mapping")

@@ -65,10 +65,11 @@ def mapCorrelation(im, x_im, y_im, vp, xs, ys):
     """
     INPUT
     im              the map
-    x_im,y_im       physical x,y positions of the grid map cells
+    x_im,y_im       physical x,y positions of the grid map cells cell centers
     vp[0:2,:]       occupied x,y positions from range sensor (in physical unit)
     xs,ys           physical x,y,positions you want to evaluate "correlation"
-
+    The xs, ys inputs are a set of deviations that are applied to the vp to shift the lidar scan
+    a little to the left or a little to the right
     OUTPUT
     c               sum of the cell values of all the positions hit by range sensor
     """
@@ -208,7 +209,7 @@ def test_mapCorrelation():
     print("Testing map_correlation with {}x{} cells".format(MAP['sizex'],MAP['sizey']))
     ts = tic()
     c = mapCorrelation(MAP['map'],x_im,y_im,Y,x_range,y_range)
-    print(c)
+    print("outputof mapCorrelation", c)
     toc(ts, "Map Correlation")
 
     c_ex = np.array([[ 4.,  6.,  6.,  5.,  8.,  6.,  3.,  2.,  0.],
@@ -267,7 +268,7 @@ def show_lidar():
 
 
 if __name__ == '__main__':
-    #compute_stereo()
+    compute_stereo()
     #show_lidar()
-    test_mapCorrelation()
+    #test_mapCorrelation()
     #test_bresenham2D()
