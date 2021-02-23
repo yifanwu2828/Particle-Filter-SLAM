@@ -277,11 +277,13 @@ def get_left_cam_param() -> dict:
                                                     0., 7.7537235550066748e+02, 2.5718049049377441e+02, 0.,
                                                     0., 0., 1., 0.],
                                                    dtype=np.float64).reshape(3, 4)
+    # left_cam_param["intrinsic"] = left_cam_param["projection_matrix"][0:3, 0:3]
+
     left_cam_param["baseline"] = 475.143600050775 / 1000
 
     left_cam_param["V_R_C"]= np.array([[-0.00680499, - 0.0153215, 0.99985],
                                        [- 0.999977, 0.000334627, - 0.00680066],
-                                       [- 0.000230383 - 0.999883 - 0.0153234]],
+                                       [- 0.000230383, - 0.999883, - 0.0153234]],
                                       dtype=np.float64
                                       )
     left_cam_param["V_P_C"] = np.array([1.64239, 0.247401, 1.58411], dtype=np.float64)
@@ -295,6 +297,9 @@ def get_right_cam_param() -> dict:
     Right camera parameter
     :return: right_cam_param
     """
+    #     [fx'  0  cx' Tx]
+    # P = [ 0  fy' cy' Ty]
+    #     [ 0   0   1   0]
     right_cam_param = dict()
     right_cam_param["img_width"] = 1280
     right_cam_param["img_height"] = 560
@@ -304,7 +309,12 @@ def get_right_cam_param() -> dict:
                                                      0., 0., 1., 0.],
                                                     dtype=np.float64).reshape(3, 4)
     # Baseline of stereo cameras: 475.143600050775 (mm)
-    right_cam_param["baseline"] = 475.143600050775/1000
+    fx = 7.7537235550066748e+02
+    B =475.143600050775/1000
+    right_cam_param["baseline"] = B
+
+    Tx = -fx * B
+    assert abs(Tx-right_cam_param["projection_matrix"][0,3])<1
     return right_cam_param
 
 
@@ -662,7 +672,37 @@ def resampling(particles: np.ndarray, weights: np.ndarray, N: int):
     return new_particles, new_weights
 
 
+def compute_stereo(path_l, path_r, verbose=False):
+    image_l = cv2.imread(path_l, 0)
+    image_r = cv2.imread(path_r, 0)
+
+    image_l = cv2.cvtColor(image_l, cv2.COLOR_BAYER_BG2BGR)
+    image_r = cv2.cvtColor(image_r, cv2.COLOR_BAYER_BG2BGR)
+
+    image_l_gray = cv2.cvtColor(image_l, cv2.COLOR_BGR2GRAY)
+    image_r_gray = cv2.cvtColor(image_r, cv2.COLOR_BGR2GRAY)
+
+    # You may need to fine-tune the variables `numDisparities` and `blockSize` based on the desired accuracy
+    stereo = cv2.StereoBM_create(numDisparities=32, blockSize=9)
+    disparity = stereo.compute(image_l_gray, image_r_gray)
+
+    if verbose:
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1)
+        ax1.imshow(image_l)
+        ax1.set_title('Left Image')
+        ax2.imshow(image_r)
+        ax2.set_title('Right Image')
+        ax3.imshow(disparity, cmap='gray')
+        ax3.set_title('Disparity Map')
+        plt.show()
+    return disparity
+
+
 def main():
+    pass
+
+
+if __name__ == '__main__':
     ###################################################################################
     # Running Config
     VERBOSE = False
@@ -725,8 +765,8 @@ def main():
     ###################################################################################
     '''Init Var'''
     # At t=0 assume robots locate at (0,0) and orientation 0 -> Xt = np.zeros((3, 1))
-    N = 3
-    # N = 10
+    # N = 3
+    N = 50
     N_threshold = 0.2 * N
     particles = np.zeros((3, N))
     weights = np.ones(N) / N
@@ -737,8 +777,8 @@ def main():
     eff = set()
     ###################################################################################
     '''SLAM'''
-    # for i in tqdm(range(num_state)):  #
-    for i in tqdm(range(10000)):
+    for i in tqdm(range(num_state)):  #
+    # for i in tqdm(range(10000)):
         # If Lidar data is not NaN, update map
         ranges = lidar_data[i, :]
         if not np.isnan(np.sum(ranges)):
@@ -747,6 +787,10 @@ def main():
             s_F_ = lidar2body(s_L_=reg2homo(s_L), V_T_L=lidar_param["V_T_L"], F_T_V=FOG_param["F_T_V"])
             ''' Update_Step '''
             particles, weights = update_step(MAP, particles, weights, s_F_)
+            N_eff = calculate_N_eff(weights, N)
+            if N_eff < N_threshold:
+                eff.add(float(N_eff))
+                particles, weight = resampling(particles, weights, N)
             # Find particle with largest weight
             max_weight = np.argmax(weights)
             Xt = particles[:, max_weight]
@@ -755,12 +799,10 @@ def main():
             # update log_odds map
             MAP['log_odds_map'] = update_map(MAP, Xt, s_F_, verbose=False)
             # Resample the particles
-            N_eff = calculate_N_eff(weights, N)
-            if N_eff < N_threshold:
-                particles, weight = resampling(particles, weights, N)
 
         if i % 100000 == 0 and i != 0:
             show_map(np.where(MAP['log_odds_map'] > 0, 1, 0).astype(np.int8))
+            print(len(eff))
         '''Prediction Step'''
         particles = prediction_step(particles, vt[i], tau[i], wt[i], noise=True)
 
@@ -793,27 +835,52 @@ def main():
     #     cell_trajs = np.load(f)
 
 
-if __name__ == '__main__':
-    print(os.getcwd())
-    left_cam_param = get_left_cam_param()
-    right_cam_param = get_right_cam_param()
-    print("left_cam:\n", left_cam_param["projection_matrix"])
-    print("right_cam:\n", right_cam_param["projection_matrix"])
-    '''
-    1. Find the depth of each pixel in the left camera.
-    2. Find the 3D Cartesian coordinates of each pixel in the left camera frame.
-    3. Transform the pixels from the camera frame to the world frame using
-        the best (highest weight) particle at each time step.
-        Find the map cells that these points fall in. 
-        You might want to consider only the pixels whose z coordinate in the world frame falls 
-        within a small plus/minus range of the flat plane of the map,
-        i.e., do not store colors of things that are way above or way below the plane that you are mapping.
-    4.Associate the RGB values with the corresponding map cells.
-     It is fine to over-write previous RGB values and it is not necessary to do any kind of smoothing or interpolation.
-     '''
-    left_image_path = "./data/stereo_images/stereo_left"
-    right_image_path = "./data/stereo_images/stereo_right"
-    left_img_fname = [f for f in os.listdir(left_image_path)]
-    left_img_timestamp = [os.path.splitext(f)[0] for f in os.listdir(left_image_path)]
+
+    # start_cam = utils.tic("--------Texture Mapping--------")
+    # print(os.getcwd())
+    # left_cam_param = get_left_cam_param()
+    # right_cam_param = get_right_cam_param()
+    # print("left_cam:\n", left_cam_param["projection_matrix"])
+    # print("right_cam:\n", right_cam_param["projection_matrix"])
+    # left_image_path = "./data/stereo_images/stereo_left/"
+    # right_image_path = "./data/stereo_images/stereo_right/"
+    # left_img_fname = sorted([f for f in os.listdir(left_image_path)])
+    # left_img_timestamp = sorted([os.path.splitext(f)[0] for f in os.listdir(left_image_path)])
     # right_img_fname = [f for f in os.listdir(right_image_path)]
-    #right_img_timestamp = [os.path.splitext(f)[0] for f in os.listdir(right_image_path)]
+    # right_img_timestamp = [os.path.splitext(f)[0] for f in os.listdir(right_image_path)]
+    # print(f"Num of image form left CAM: {len(left_img_timestamp)}")
+    # path_l, path_r = left_image_path + left_img_fname[0], right_image_path + right_img_fname[0]
+    # '''
+    # 1. Find the depth of each pixel in the left camera.
+    # 2. Find the 3D Cartesian coordinates of each pixel in the left camera frame.
+    # 3. Transform the pixels from the camera frame to the world frame using
+    #     the best (highest weight) particle at each time step.
+    #     Find the map cells that these points fall in.
+    #     You might want to consider only the pixels whose z coordinate in the world frame falls
+    #     within a small plus/minus range of the flat plane of the map,
+    #     i.e., do not store colors of things that are way above or way below the plane that you are mapping.
+    # 4.Associate the RGB values with the corresponding map cells.
+    #  It is fine to over-write previous RGB values and it is not necessary to do any kind of smoothing or interpolation.
+    # '''
+    # # image_width: 1280
+    # # image_height: 560
+    # PR = right_cam_param["projection_matrix"]
+    # b = left_cam_param["baseline"]
+    # fsu = PR[0, 0]
+    # fsv = PR[1, 1]
+    # cu = PR[0, 2]
+    # cv = PR[1, 2]
+    # d = compute_stereo(path_l, path_r, verbose=True)
+    # print("d:", d.shape)
+    # z = fsu*b/(d + 1e-8)
+    # img = np.zeros(d.shape)
+    #
+    #
+    # # x = (uL-cu)/fsu * z
+    # # y = (vL-cv)/fsv * z
+    # print(x.shape)
+    # print(y.shape)
+    #
+    #
+    #
+    # utils.toc(start_cam, "Texture Mapping")
