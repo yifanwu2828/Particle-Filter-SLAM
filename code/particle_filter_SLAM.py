@@ -721,30 +721,30 @@ def main():
 
 
 if __name__ == '__main__':
-    # ###################################################################################
-    # # Running Config
-    # VERBOSE = False
-    # DEAD_RECON = False
-    # SHOW_CONFIG = False
-    # if SHOW_CONFIG:
-    #     show_image()
-    # ###################################################################################
-    # # Dead Reckoning
-    # # if DEAD_RECON:
-    # #     start_dead_Recon = utils.tic("--------DEAD RECKONING--------")
-    # #     sync_fog_encoder_fname = "data/sync_fog_encoder_left.csv"
-    # #     traj = dead_reckoning(sync_fog_encoder_fname, expert=False, verbose=VERBOSE)
-    # #     utils.toc(start_dead_Recon, "Finish Dead_Reckoning")
-    #
-    # ###################################################################################
-    # start_init = utils.tic("--------INIT SENSOR PARAM--------")
-    # # Init lidar_param, FOG_param, encoder_param
-    # lidar_param = get_lidar_param(verbose=VERBOSE)
-    # FOG_param = get_FOG_param(verbose=VERBOSE)
-    # encoder_param = get_encoder_param(verbose=VERBOSE)
-    # left_cam_param = get_left_cam_param()
-    # right_cam_param = get_right_cam_param()
-    # print("lidar_param\nFOG_param\nencoder_param")
+    ###################################################################################
+    # Running Config
+    VERBOSE = False
+    DEAD_RECON = False
+    SHOW_CONFIG = False
+    if SHOW_CONFIG:
+        show_image()
+    ###################################################################################
+    # Dead Reckoning
+    # if DEAD_RECON:
+    #     start_dead_Recon = utils.tic("--------DEAD RECKONING--------")
+    #     sync_fog_encoder_fname = "data/sync_fog_encoder_left.csv"
+    #     traj = dead_reckoning(sync_fog_encoder_fname, expert=False, verbose=VERBOSE)
+    #     utils.toc(start_dead_Recon, "Finish Dead_Reckoning")
+
+    ###################################################################################
+    start_init = utils.tic("--------INIT SENSOR PARAM--------")
+    # Init lidar_param, FOG_param, encoder_param
+    lidar_param = get_lidar_param(verbose=VERBOSE)
+    FOG_param = get_FOG_param(verbose=VERBOSE)
+    encoder_param = get_encoder_param(verbose=VERBOSE)
+    left_cam_param = get_left_cam_param()
+    right_cam_param = get_right_cam_param()
+    print("lidar_param\nFOG_param\nencoder_param")
     # if VERBOSE:
     #     # {V}T{L}
     #     print("lidar2vehicle_param[T]: {}\n{}".format(lidar_param["V_T_L"].shape, lidar_param["V_T_L"]))
@@ -844,12 +844,12 @@ if __name__ == '__main__':
     # # Save result
     # with open('map_test_100_tresh_5.pkl', 'wb') as f:
     #     pickle.dump(MAP, f)
-    with open('map_test_100_tresh_5.pkl', 'rb') as f:
-        MAP= pickle.load(f)
-        show_map(MAP['map'].astype(np.int8), title="Occupancy grid map")
-        show_map(MAP["cell_trajs_map"], title="cell_trajs")
-        show_map((MAP['map'] + MAP["cell_trajs_map"]).astype(np.int8), title="map&trajs")
-    show_map(MAP['map'])
+    # with open('map_test_100_tresh_5.pkl', 'rb') as f:
+    #     MAP= pickle.load(f)
+    #     show_map(MAP['map'].astype(np.int8), title="Occupancy grid map")
+    #     show_map(MAP["cell_trajs_map"], title="cell_trajs")
+    #     show_map((MAP['map'] + MAP["cell_trajs_map"]).astype(np.int8), title="map&trajs")
+    # show_map(MAP['map'])
 
     ##################################################################################
     # trajectory = np.vstack(trajectory)
@@ -879,12 +879,12 @@ if __name__ == '__main__':
     4.Associate the RGB values with the corresponding map cells.
      It is fine to over-write previous RGB values and it is not necessary to do any kind of smoothing or interpolation.
     '''
-    # PR = right_cam_param["projection_matrix"]
-    # b = left_cam_param["baseline"]
-    # fsu = PR[0, 0]
-    # fsv = PR[1, 1]
-    # cu = PR[0, 2]
-    # cv = PR[1, 2]
+    PR = right_cam_param["projection_matrix"]
+    b = left_cam_param["baseline"]
+    fsu = PR[0, 0]
+    fsv = PR[1, 1]
+    cu = PR[0, 2]
+    cv = PR[1, 2]
     # d = compute_stereo(path_l, path_r, verbose=False)
     # print("d:", d.shape)
     # z = fsu*b/(d + 1e-8)
